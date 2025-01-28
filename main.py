@@ -11,29 +11,39 @@ from Modules.notes import start_note_taking
 from Modules.qr_code_scanner import scan_qr_code
 from Modules.assistant_commands import process_assistant_command
 from datetime import datetime
+from threading import Timer
 
 IDLE_TIMEOUT = 6  # Time in seconds before going idle
 
 # Global variables
 screen_active = False
 current_song = None
+idle_timer = None  # Keep track of the current timer
 
 
 def idle_screen():
     """Blank the screen."""
-    global screen_active
+    global screen_active, idle_timer
     print("Screen is now idle.")
     send_to_frame("clear_screen")
     screen_active = False
+    idle_timer = None
 
 
 def activate_screen():
-    """Activate the screen."""
-    global screen_active
+    """Activate the screen and reset the idle timer."""
+    global screen_active, idle_timer
     screen_active = True
     send_to_frame("screen_active")
     print("Screen activated.")
-    threading.Timer(IDLE_TIMEOUT, idle_screen).start()
+    
+    # Cancel existing timer if any
+    if idle_timer:
+        idle_timer.cancel()
+    
+    # Start new timer
+    idle_timer = Timer(IDLE_TIMEOUT, idle_screen)
+    idle_timer.start()
 
 
 def on_new_notification(notification):
@@ -89,8 +99,10 @@ def main():
             display_main_screen(frame)
 
         elif tap_type == "double":
+            activate_screen()
             command = handle_voice_command()
-            process_assistant_command(command)
+            if command:  # Only process if command was entered
+                process_assistant_command(command)
 
         elif voice_command:
             activate_screen()
