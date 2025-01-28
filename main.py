@@ -1,15 +1,15 @@
 import time
 import threading
-from frame_connection import connect_to_frame, send_to_frame
-from tap_detection import detect_tap, handle_voice_command
-from display_time import display_time
-from notifications import display_notifications, show_notification
-from weather import display_weather, get_detailed_weather
-from music_controls import display_current_song, handle_music_command
-from reminders import check_reminders, show_reminder, add_reminder
-from notes import start_note_taking
-from qr_code_scanner import scan_qr_code
-from assistant_commands import process_assistant_command
+from Modules.frame_connection import connect_to_frame, send_to_frame
+from Modules.tap_detection import detect_tap, handle_voice_command
+from Modules.display_time import display_time
+from Modules.notifications import display_notifications, show_notification
+from Modules.weather import display_weather, get_detailed_weather
+from Modules.music_controls import display_current_song, handle_music_command
+from Modules.reminders import check_reminders, show_reminder, add_reminder
+from Modules.notes import start_note_taking
+from Modules.qr_code_scanner import scan_qr_code
+from Modules.assistant_commands import process_assistant_command
 from datetime import datetime
 
 IDLE_TIMEOUT = 6  # Time in seconds before going idle
@@ -82,6 +82,7 @@ def main():
 
     while True:
         tap_type, voice_command = detect_tap()
+        time.sleep(0.1)  # Add small delay to prevent high CPU usage
 
         if tap_type == "single":
             activate_screen()

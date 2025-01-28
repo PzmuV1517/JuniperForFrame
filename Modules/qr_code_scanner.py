@@ -1,4 +1,4 @@
-from frame_connection import send_to_frame
+from Modules.frame_connection import send_to_frame
 
 def scan_qr_code(frame=None):
     message = "Scanning QR Code... Result: example.com"

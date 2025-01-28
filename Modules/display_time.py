@@ -1,5 +1,5 @@
 from datetime import datetime
-from frame_connection import send_to_frame
+from Modules.frame_connection import send_to_frame
 
 def display_time(frame=None):
     now = datetime.now().strftime("%H:%M:%S")

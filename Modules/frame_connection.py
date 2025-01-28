@@ -1,12 +1,10 @@
 import time
-from Modules.frame_connection import send_to_frame
 
 class MockFrame:
     """Simulate a Brilliant Labs Frame for testing purposes."""
 
     def send(self, message):
         print(f"Message to Frame: {message}")
-
 
 def connect_to_frame():
     """Simulates connecting to the Brilliant Labs Frame."""
@@ -15,3 +13,7 @@ def connect_to_frame():
     frame = MockFrame()
     print("Connected to the Brilliant Labs Frame.")
     return frame
+
+def send_to_frame(message):
+    """Send a message to the frame."""
+    print(f"Message to Frame: {message}")

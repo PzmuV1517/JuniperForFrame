@@ -1,4 +1,4 @@
-from frame_connection import send_to_frame
+from Modules.frame_connection import send_to_frame
 
 def process_assistant_command(command, frame=None):
     message = f"Processing command: {command}"

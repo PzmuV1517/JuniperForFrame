@@ -1,4 +1,4 @@
-from frame_connection import send_to_frame
+from Modules.frame_connection import send_to_frame
 import time
 
 reminders = [{"time": time.time() + 10, "message": "Meeting with John"}]  # Example reminder

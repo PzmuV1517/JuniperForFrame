@@ -1,4 +1,4 @@
-from frame_connection import send_to_frame
+from Modules.frame_connection import send_to_frame
 
 def start_note_taking(frame=None):
     print("Note-taking started. Speak now.")
@@ -7,4 +7,3 @@ def start_note_taking(frame=None):
     if frame:
         frame.send(message)
     print(message)
-

@@ -1,4 +1,4 @@
-from frame_connection import send_to_frame
+from Modules.frame_connection import send_to_frame
 
 def display_weather(frame=None):
     message = "Weather: Sunny, 25°C"
