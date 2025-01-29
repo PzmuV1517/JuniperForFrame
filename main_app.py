@@ -5,6 +5,7 @@ from kivy.uix.label import Label
 from kivy.uix.textinput import TextInput
 from kivy.uix.popup import Popup
 from kivy.uix.screenmanager import ScreenManager, Screen
+from kivy.utils import platform
 from datetime import datetime
 import json
 import os
@@ -23,23 +24,50 @@ from kivy.uix.gridlayout import GridLayout
 from kivy.uix.button import Button
 from kivy.uix.spinner import Spinner
 from calendar import monthrange
+import speech_recognition as sr
+from kivy.graphics import Color, Rectangle
+from threading import Timer
+import time
 
 class MainScreen(Screen):
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         self.layout = BoxLayout(orientation='vertical', padding=10, spacing=10)
         
-        # Info display
-        self.info_label = Label(
-            text='Tap to start',
-            size_hint=(1, 0.4)
+        # Frame display simulation
+        # Create a dark background box
+        frame_bg = BoxLayout(
+            orientation='vertical',
+            size_hint=(1, 0.7),
+            padding=10
         )
-        self.layout.add_widget(self.info_label)
+        frame_bg.canvas.before.add(Color(0, 0, 0, 0.2))
+        frame_bg.canvas.before.add(Rectangle(pos=frame_bg.pos, size=frame_bg.size))
+        
+        # Add Label for display
+        self.frame_display = Label(
+            text='Frame Display Simulation\n(Tap to start)',
+            size_hint=(1, 1),
+            halign='center',
+            valign='middle',
+            color=(0, 1, 0, 1),  # Green text like many AR displays
+            font_size='20sp',
+            text_size=(None, None),  # Allow text to wrap
+            markup=True
+        )
+        self.frame_display.bind(size=self._update_text_size)
+        
+        # Add label to background
+        frame_bg.add_widget(self.frame_display)
+        frame_bg.bind(size=self._update_background)
+        frame_bg.bind(pos=self._update_background)
+        
+        self.layout.add_widget(frame_bg)
         
         # Buttons layout
         buttons_layout = BoxLayout(
             orientation='horizontal',
-            size_hint=(1, 0.2),
+            size_hint=(1, 0.15),
             spacing=10
         )
         
@@ -48,16 +76,19 @@ class MainScreen(Screen):
         tap_button.bind(on_press=self.handle_tap)
         buttons_layout.add_widget(tap_button)
         
+        # Comment out or remove the voice command button
+        '''
         voice_button = Button(text='Voice Command')
         voice_button.bind(on_press=self.handle_voice)
         buttons_layout.add_widget(voice_button)
+        '''
         
         self.layout.add_widget(buttons_layout)
         
         # Navigation buttons
         nav_layout = BoxLayout(
             orientation='horizontal',
-            size_hint=(1, 0.2),
+            size_hint=(1, 0.15),
             spacing=10
         )
         
@@ -76,56 +107,129 @@ class MainScreen(Screen):
         self.layout.add_widget(nav_layout)
         self.add_widget(self.layout)
         
-        # Music controls
+        # Initialize other components
         self.current_song = None
         self.is_playing = False
+        self.recognizer = sr.Recognizer()
+        self.idle_timer = None
+        self.IDLE_TIMEOUT = 6  # seconds
     
+    def _update_text_size(self, instance, value):
+        instance.text_size = (instance.width, None)
+    
+    def _update_background(self, instance, value):
+        """Update the background rectangle when the layout changes"""
+        instance.canvas.before.clear()
+        with instance.canvas.before:
+            Color(0, 0, 0, 0.2)  # Semi-transparent black
+            Rectangle(pos=instance.pos, size=instance.size)
+    
+    def update_frame_display(self, text):
+        """Update the simulated frame display"""
+        self.frame_display.text = text
+
+    def start_idle_timer(self):
+        """Start or restart the idle timer"""
+        if self.idle_timer:
+            self.idle_timer.cancel()
+        self.idle_timer = Timer(self.IDLE_TIMEOUT, self.clear_screen)
+        self.idle_timer.start()
+
+    def clear_screen(self):
+        """Clear the frame display"""
+        self.update_frame_display("")
+        self.idle_timer = None
+
     def handle_tap(self, instance):
+        # Cancel any existing timer
+        if self.idle_timer:
+            self.idle_timer.cancel()
+        
+        # Get basic info
         now = datetime.now()
         time_str = now.strftime("%H:%M:%S")
         date_str = now.strftime("%Y-%m-%d")
-        self.info_label.text = f"Time: {time_str}\nDate: {date_str}\nWeather: Sunny, 25°C"
-    
+        display_text = f"Time: {time_str}\nDate: {date_str}\nWeather: Sunny, 25°C"
+        
+        # Add current song if playing
+        from Modules.music_controls import get_current_song
+        current_song = get_current_song()
+        if current_song:
+            display_text += f"\nNow Playing: {current_song}"
+        
+        self.update_frame_display(display_text)
+        
+        # Start new idle timer
+        self.start_idle_timer()
+
     def handle_voice(self, instance):
-        content = BoxLayout(orientation='vertical', padding=10, spacing=10)
-        self.command_input = TextInput(
-            multiline=False,
-            size_hint=(1, 0.6),
-            hint_text='Enter voice command here...'
-        )
-        submit_button = Button(
-            text='Submit',
-            size_hint=(1, 0.4)
-        )
+        """Voice commands temporarily disabled"""
+        self.update_frame_display("Voice commands are currently disabled")
+        self.start_idle_timer()
         
-        content.add_widget(Label(text='Voice Command Input'))
-        content.add_widget(self.command_input)
-        content.add_widget(submit_button)
-        
-        self.popup = Popup(
-            title='Voice Command',
-            content=content,
-            size_hint=(0.8, 0.4)
-        )
-        
-        submit_button.bind(on_press=self.process_voice_command)
-        self.popup.open()
-    
-    def process_voice_command(self, instance):
-        command = self.command_input.text.lower()
-        
-        if "new reminder" in command:
-            self.popup.dismiss()
-            self.ask_reminder_details()
+        # Original code commented out for future use
+        '''
+        if self.idle_timer:
+            self.idle_timer.cancel()
+                
+        try:
+            self.update_frame_display("Listening...\nSpeak your command")
             
-        elif "next reminder" in command:
-            self.show_next_reminder()
-            
-        elif any(cmd in command for cmd in ["next song", "previous song", "pause", "play"]):
-            self.handle_music_command(command)
-            
-        self.popup.dismiss()
-    
+            with sr.Microphone() as source:
+                self.recognizer.adjust_for_ambient_noise(source)
+                audio = self.recognizer.listen(source, timeout=5)
+                
+                self.update_frame_display("Processing your command...")
+                command = self.recognizer.recognize_google(audio).lower()
+                
+                self.update_frame_display(f"Command detected:\n{command}")
+                time.sleep(1)
+                
+                self.process_voice_command(command)
+                
+        except sr.WaitTimeoutError:
+            self.update_frame_display("No speech detected")
+        except sr.UnknownValueError:
+            self.update_frame_display("Could not understand audio")
+        except sr.RequestError as e:
+            self.update_frame_display(f"Could not process audio: {str(e)}")
+        finally:
+            self.start_idle_timer()
+        '''
+
+    def process_voice_command(self, command):
+        """Voice command processing temporarily disabled"""
+        pass
+        
+        # Original code commented out for future use
+        '''
+        if "create note" in command:
+            self.update_frame_display("Command: Create Note\nListening for note content...")
+            try:
+                source = sr.Microphone()
+                with source as mic:
+                    self.recognizer.adjust_for_ambient_noise(mic)
+                    self.update_frame_display("Speak your note now...")
+                    
+                    try:
+                        audio = self.recognizer.listen(mic, timeout=10)
+                        note_text = self.recognizer.recognize_google(audio)
+                        self.update_frame_display(f"Note saved:\n{note_text}")
+                        self.notes_screen.notes.append(note_text)
+                        self.notes_screen.save_notes()
+                        self.start_idle_timer()
+                    except sr.UnknownValueError:
+                        self.update_frame_display("Could not understand audio")
+                    except sr.RequestError:
+                        self.update_frame_display("Could not process audio")
+                    
+            except Exception as e:
+                self.update_frame_display("Error saving note")
+                    
+        elif "create reminder" in command:
+            # ... rest of the code ...
+        '''
+
     def handle_music_command(self, command):
         if "next song" in command:
             self.current_song = "Next Song"
