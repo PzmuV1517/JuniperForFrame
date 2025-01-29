@@ -5,13 +5,15 @@ def get_current_song():
     """Get currently playing song from platform-specific APIs"""
     try:
         if platform == 'android':
-            # Android-specific code using jnius
+            # Android-specific code using pyjnius
             try:
-                from jnius import autoclass, cast, JavaException
+                from jnius import autoclass
                 MediaSessionManager = autoclass('android.media.session.MediaSessionManager')
+                MediaMetadata = autoclass('android.media.MediaMetadata')
                 Context = autoclass('android.content.Context')
-                activity = autoclass('org.kivy.android.PythonActivity').mActivity
+                PythonActivity = autoclass('org.kivy.android.PythonActivity')
                 
+                activity = PythonActivity.mActivity
                 session_manager = activity.getSystemService(Context.MEDIA_SESSION_SERVICE)
                 sessions = session_manager.getActiveSessions(None)
                 
@@ -27,7 +29,6 @@ def get_current_song():
                 return None
         else:
             # Windows/Desktop mock implementation
-            # You could implement actual Windows media detection here
             return "Mock Song - Mock Artist"
             
     except Exception as e:
