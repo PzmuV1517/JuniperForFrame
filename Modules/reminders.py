@@ -1,18 +1,27 @@
 from Modules.frame_connection import send_to_frame
 import time
+import os
+import json
+from datetime import datetime
 
 reminders = [{"time": time.time() + 10, "message": "Meeting with John"}]  # Example reminder
 
 
 def check_reminders(callback):
     """Periodically check reminders and trigger callback."""
-    global reminders
-    current_time = time.time()
-    triggered_reminders = [rem for rem in reminders if rem["time"] <= current_time]
-
-    for reminder in triggered_reminders:
-        callback(reminder)
-        reminders.remove(reminder)  # Remove triggered reminder
+    if os.path.exists('reminders.json'):
+        with open('reminders.json', 'r') as f:
+            reminders = json.load(f)
+        
+        current_time = datetime.now()
+        for reminder in reminders:
+            reminder_time = datetime.strptime(reminder['datetime'], '%B %d %Y at %H:%M')
+            if current_time >= reminder_time:
+                callback(reminder)
+                reminders.remove(reminder)
+                
+        with open('reminders.json', 'w') as f:
+            json.dump(reminders, f)
 
 
 def show_reminder(reminder=None, frame=None):
