@@ -67,7 +67,9 @@ def display_main_screen(frame):
     display_message = f"Time: {time_str}\nDate: {date_str}"
     
     # Add weather
-    weather_info = "Sunny, 25°C"  # From weather.py
+    from Modules.weather import weather_manager, format_weather
+    weather_data = weather_manager.get_weather()
+    weather_info = format_weather(weather_data)
     display_message += f"\nWeather: {weather_info}"
     
     # Add current song if playing
@@ -76,7 +78,7 @@ def display_main_screen(frame):
         
     # Send combined message to frame
     if frame:
-        frame.send(display_message)
+        frame.send_text(display_message)
     print(display_message)
 
 

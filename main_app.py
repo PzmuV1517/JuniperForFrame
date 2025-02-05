@@ -24,10 +24,13 @@ from kivy.uix.gridlayout import GridLayout
 from kivy.uix.button import Button
 from kivy.uix.spinner import Spinner
 from calendar import monthrange
-import speech_recognition as sr
 from kivy.graphics import Color, Rectangle
 from threading import Timer
 import time
+
+if platform == 'android':
+    from android.permissions import request_permissions, Permission
+    from android import activity
 
 class MainScreen(Screen):
     def __init__(self, **kwargs):
@@ -50,7 +53,7 @@ class MainScreen(Screen):
             size_hint=(1, 1),
             halign='center',
             valign='middle',
-            color=(0, 1, 0, 1),  # Green text like many AR displays
+            color=(0, 1, 0, 1),  # Green text like many AR displays heheheheh
             font_size='20sp',
             text_size=(None, None),  # Allow text to wrap
             markup=True
@@ -110,9 +113,15 @@ class MainScreen(Screen):
         # Initialize other components
         self.current_song = None
         self.is_playing = False
-        self.recognizer = sr.Recognizer()
         self.idle_timer = None
         self.IDLE_TIMEOUT = 6  # seconds
+
+        # Initialize music info
+        self.current_song = None
+        self.current_artist = None
+        if platform == 'android':
+            from Modules.media_listener import get_current_song
+            self.current_song, self.current_artist = get_current_song()
     
     def _update_text_size(self, instance, value):
         instance.text_size = (instance.width, None)
@@ -141,107 +150,53 @@ class MainScreen(Screen):
         self.idle_timer = None
 
     def handle_tap(self, instance):
-        # Cancel any existing timer
         if self.idle_timer:
             self.idle_timer.cancel()
         
-        # Get basic info
+        # Get current info
         now = datetime.now()
         time_str = now.strftime("%H:%M:%S")
         date_str = now.strftime("%Y-%m-%d")
-        display_text = f"Time: {time_str}\nDate: {date_str}\nWeather: Sunny, 25°C"
         
-        # Add current song if playing
-        from Modules.music_controls import get_current_song
-        current_song = get_current_song()
-        if current_song:
-            display_text += f"\nNow Playing: {current_song}"
+        # Get temperature
+        from Modules.weather import weather_manager, format_weather
+        weather_data = weather_manager.get_weather()
+        weather_str = format_weather(weather_data)
+        
+        # Build display text
+        display_text = f"Time: {time_str}\nDate: {date_str}\nTemp: {weather_str}"
+        
+        # Add current song if available and on Android
+        if platform == 'android':
+            from Modules.media_listener import get_current_song
+            song, artist = get_current_song()
+            if song and artist:
+                display_text += f"\nNow Playing:\n{song}\nBy {artist}"
         
         self.update_frame_display(display_text)
-        
-        # Start new idle timer
         self.start_idle_timer()
 
     def handle_voice(self, instance):
-        """Voice commands temporarily disabled"""
-        self.update_frame_display("Voice commands are currently disabled")
+        """Voice commands are only available on Android"""
+        self.update_frame_display("Voice commands are only available on Android devices")
         self.start_idle_timer()
-        
-        # Original code commented out for future use
-        '''
-        if self.idle_timer:
-            self.idle_timer.cancel()
-                
-        try:
-            self.update_frame_display("Listening...\nSpeak your command")
-            
-            with sr.Microphone() as source:
-                self.recognizer.adjust_for_ambient_noise(source)
-                audio = self.recognizer.listen(source, timeout=5)
-                
-                self.update_frame_display("Processing your command...")
-                command = self.recognizer.recognize_google(audio).lower()
-                
-                self.update_frame_display(f"Command detected:\n{command}")
-                time.sleep(1)
-                
-                self.process_voice_command(command)
-                
-        except sr.WaitTimeoutError:
-            self.update_frame_display("No speech detected")
-        except sr.UnknownValueError:
-            self.update_frame_display("Could not understand audio")
-        except sr.RequestError as e:
-            self.update_frame_display(f"Could not process audio: {str(e)}")
-        finally:
-            self.start_idle_timer()
-        '''
 
     def process_voice_command(self, command):
-        """Voice command processing temporarily disabled"""
+        """Voice command processing is only available on Android"""
         pass
-        
-        # Original code commented out for future use
-        '''
-        if "create note" in command:
-            self.update_frame_display("Command: Create Note\nListening for note content...")
-            try:
-                source = sr.Microphone()
-                with source as mic:
-                    self.recognizer.adjust_for_ambient_noise(mic)
-                    self.update_frame_display("Speak your note now...")
-                    
-                    try:
-                        audio = self.recognizer.listen(mic, timeout=10)
-                        note_text = self.recognizer.recognize_google(audio)
-                        self.update_frame_display(f"Note saved:\n{note_text}")
-                        self.notes_screen.notes.append(note_text)
-                        self.notes_screen.save_notes()
-                        self.start_idle_timer()
-                    except sr.UnknownValueError:
-                        self.update_frame_display("Could not understand audio")
-                    except sr.RequestError:
-                        self.update_frame_display("Could not process audio")
-                    
-            except Exception as e:
-                self.update_frame_display("Error saving note")
-                    
-        elif "create reminder" in command:
-            # ... rest of the code ...
-        '''
 
     def handle_music_command(self, command):
-        if "next song" in command:
-            self.current_song = "Next Song"
-        elif "previous song" in command:
-            self.current_song = "Previous Song"
-        elif "pause" in command:
-            self.is_playing = False
-        elif "play" in command:
-            self.is_playing = True
-        
-        status = "Playing" if self.is_playing else "Paused"
-        self.info_label.text = f"Music: {status}\nCurrent Song: {self.current_song}"
+        """Pass music commands to the appropriate service"""
+        if platform == 'android':
+            # Get current song info
+            from Modules.media_listener import get_current_song
+            self.current_song, self.current_artist = get_current_song()
+            if self.current_song and self.current_artist:
+                self.update_frame_display(f"Now Playing:\n{self.current_song}\nBy {self.current_artist}")
+            else:
+                self.update_frame_display("No song currently playing")
+        else:
+            self.update_frame_display("Music detection only available on Android")
     
     def ask_reminder_details(self):
         content = BoxLayout(orientation='vertical', padding=10, spacing=10)
@@ -559,8 +514,7 @@ class RemindersScreen(Screen):
         
         # Month selector
         current_month = datetime.now().month
-        months = ['January', 'February', 'March', 'April', 'May', 'June', 
-                 'July', 'August', 'September', 'October', 'November', 'December']
+        months = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December']
         self.month_spinner = Spinner(
             text=months[current_month-1],
             values=months,
@@ -816,7 +770,25 @@ class FrameApp(App):
         self.sm.add_widget(self.reminders_screen)
         self.sm.add_widget(self.qr_screen)
         
+        if platform == 'android':
+            request_permissions([
+                Permission.INTERNET,
+                Permission.BLUETOOTH,
+                Permission.BLUETOOTH_ADMIN,
+                Permission.BLUETOOTH_CONNECT,
+                Permission.BLUETOOTH_SCAN,
+                Permission.ACCESS_FINE_LOCATION,
+                Permission.ACCESS_COARSE_LOCATION
+            ])
         return self.sm
+
+    def on_pause(self):
+        """Handle app pause on Android"""
+        return True
+
+    def on_resume(self):
+        """Handle app resume on Android"""
+        pass
 
 if __name__ == '__main__':
     FrameApp().run()
