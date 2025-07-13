@@ -23,7 +23,7 @@ class MainApp extends StatefulWidget {
 class MainAppState extends State<MainApp> with SimpleFrameAppState {
   StreamSubscription<List<int>>? _tapSubs;
   String _apiKey = '';
-  String _statusMessage = 'Connect Frame and set API key to start';
+  String _statusMessage = 'Connect Frame - Tap=time, Double-tap=record';
   bool _isListening = false;
   final TextEditingController _apiKeyController = TextEditingController();
   
@@ -353,6 +353,14 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
   }
 
   void _executeSingleTapAction() async {
+    // If microphone is active (recording), stop it
+    if (_frameMicrophoneActive) {
+      debugPrint('Single tap during recording - stopping microphone');
+      await _stopFrameMicrophone();
+      return;
+    }
+    
+    // Otherwise, show date/time HUD
     debugPrint('Executing single tap action - Show date/time HUD');
     
     setState(() {
@@ -370,7 +378,7 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
       await frame!.sendMessage(TxPlainText(msgCode: 0x12, text: ' '));
       if (mounted) {
         setState(() {
-          _statusMessage = 'Ready - Tap for time, double-tap for AI';
+          _statusMessage = 'Ready - Tap for time, double-tap to record';
         });
       }
     });
@@ -379,26 +387,26 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
   Future<void> _startFrameMicrophone() async {
     setState(() {
       _frameMicrophoneActive = true;
-      _statusMessage = 'Listening via Frame... Speak now';
+      _statusMessage = 'Recording... Single tap to stop';
       _microphoneBuffer.clear();
     });
 
-    debugPrint('Starting Frame microphone recording');
+    debugPrint('Starting Frame microphone recording with tap control');
 
     // Send microphone start command to Frame (0x11)
     await frame!.sendMessage(TxCode(msgCode: 0x11, value: 1));
     debugPrint('Sent microphone start command to Frame');
     
     // Show listening state on Frame
-    await frame!.sendMessage(TxPlainText(msgCode: 0x0a, text: 'Listening...\nSpeak your question'));
+    await frame!.sendMessage(TxPlainText(msgCode: 0x0a, text: 'Recording...\nTap once to stop'));
 
-    // Set timeout for microphone recording (10 seconds)
-    _microphoneTimeout = Timer(const Duration(seconds: 10), () {
-      debugPrint('Microphone timeout reached');
+    // Set a backup timeout (60 seconds) in case user forgets to stop
+    _microphoneTimeout = Timer(const Duration(seconds: 60), () {
+      debugPrint('Backup microphone timeout reached (60s)');
       _stopFrameMicrophone();
     });
     
-    debugPrint('Microphone timeout set for 10 seconds');
+    debugPrint('Recording started - tap once to stop, backup timeout: 60s');
   }
 
   Future<void> _stopFrameMicrophone() async {
@@ -440,7 +448,7 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
         await frame!.sendMessage(TxPlainText(msgCode: 0x12, text: ' '));
         if (mounted) {
           setState(() {
-            _statusMessage = 'Ready - Tap for time, double-tap for AI';
+            _statusMessage = 'Ready - Tap for time, double-tap to record';
           });
         }
       });
@@ -559,6 +567,12 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
   }
 
   void _executeDoubleTapAction() async {
+    // If microphone is already active, ignore double-tap to prevent interruption
+    if (_frameMicrophoneActive) {
+      debugPrint('Double tap ignored - already recording (use single tap to stop)');
+      return;
+    }
+    
     debugPrint('Executing double tap action - Activate AI');
     
     if (_apiKey.isEmpty) {
@@ -638,7 +652,7 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
                 await frame!.sendMessage(TxPlainText(msgCode: 0x0a, text: 'No audio detected\nDouble-tap to retry'));
                 setState(() {
                   _isListening = false;
-                  _statusMessage = 'Ready - Tap for time, double-tap for AI';
+                  _statusMessage = 'Ready - Tap for time, double-tap to record';
                 });
               });
             }
@@ -666,7 +680,7 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
 
       // Initial setup complete
       setState(() {
-        _statusMessage = 'Ready - Tap for time, double-tap for AI';
+        _statusMessage = 'Ready - Tap for time, double-tap to record';
       });
 
     } catch (e) {
@@ -692,6 +706,7 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
   void dispose() {
     _apiKeyController.dispose();
     _tapTimer?.cancel();
+    _microphoneTimeout?.cancel();
     super.dispose();
   }
 
@@ -1054,7 +1069,7 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
       await frame!.sendMessage(TxPlainText(msgCode: 0x12, text: ' '));
       if (mounted) {
         setState(() {
-          _statusMessage = 'Ready - Tap for time, double-tap for AI';
+          _statusMessage = 'Ready - Tap for time, double-tap to record';
         });
       }
     });
