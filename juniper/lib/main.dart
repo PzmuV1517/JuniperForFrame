@@ -10,6 +10,15 @@ import 'package:simple_frame_app/simple_frame_app.dart';
 import 'package:simple_frame_app/tx/plain_text.dart';
 import 'package:simple_frame_app/tx/code.dart';
 
+// Screen state management for Frame display
+enum FrameScreenState {
+  idle,           // Ready state - interruptible
+  hud,            // Time/date display - interruptible
+  recording,      // AI listening/recording - non-interruptible (tap stops recording)
+  processing,     // Processing audio - non-interruptible
+  aiResponse,     // AI response display - interruptible
+}
+
 void main() => runApp(const MainApp());
 
 class MainApp extends StatefulWidget {
@@ -36,6 +45,9 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
   List<int> _microphoneBuffer = [];
   bool _frameMicrophoneActive = false;
   Timer? _microphoneTimeout;
+
+  // Screen state management
+  FrameScreenState _screenState = FrameScreenState.idle;
 
   @override
   void initState() {
@@ -332,6 +344,23 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
   }
 
   void _onSingleTapDetected() {
+    debugPrint('Tap detected. Current screen state: $_screenState');
+
+    // Handle non-interruptible states with special behavior
+    if (_screenState == FrameScreenState.recording) {
+      // During recording, single tap stops recording (no double-tap detection)
+      debugPrint('Single tap during recording - stopping microphone immediately');
+      _executeSingleTapAction();
+      return;
+    }
+    
+    if (_screenState == FrameScreenState.processing) {
+      // During processing, ignore all taps
+      debugPrint('Tap ignored - currently processing (non-interruptible)');
+      return;
+    }
+
+    // For interruptible states (idle, hud, aiResponse), use normal tap detection
     _tapCount++;
     debugPrint('Tap detected. Total count: $_tapCount');
 
@@ -360,9 +389,10 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
       return;
     }
     
-    // Otherwise, show date/time HUD
+    // Otherwise, show date/time HUD (interruptible)
     debugPrint('Executing single tap action - Show date/time HUD');
     
+    _screenState = FrameScreenState.hud;
     setState(() {
       _statusMessage = 'Showing date/time on Frame';
     });
@@ -373,18 +403,22 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
     
     await frame!.sendMessage(TxPlainText(msgCode: 0x0a, text: '$dateStr\n$timeStr'));
     
-    // Clear the display after 3 seconds
+    // Clear the display after 3 seconds (return to idle state)
     Timer(const Duration(seconds: 3), () async {
-      await frame!.sendMessage(TxPlainText(msgCode: 0x12, text: ' '));
-      if (mounted) {
-        setState(() {
-          _statusMessage = 'Ready - Tap for time, double-tap to record';
-        });
+      if (_screenState == FrameScreenState.hud) { // Only clear if still showing HUD
+        await frame!.sendMessage(TxPlainText(msgCode: 0x12, text: ' '));
+        _screenState = FrameScreenState.idle;
+        if (mounted) {
+          setState(() {
+            _statusMessage = 'Ready - Tap for time, double-tap to record';
+          });
+        }
       }
     });
   }
 
   Future<void> _startFrameMicrophone() async {
+    _screenState = FrameScreenState.recording;
     setState(() {
       _frameMicrophoneActive = true;
       _statusMessage = 'Recording... Single tap to stop';
@@ -423,10 +457,15 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
     // Send microphone stop command to Frame (0x13)
     await frame!.sendMessage(TxCode(msgCode: 0x13, value: 1));
     
+    // Set processing state (non-interruptible)
+    _screenState = FrameScreenState.processing;
     setState(() {
       _frameMicrophoneActive = false;
       _statusMessage = 'Processing audio... (${_microphoneBuffer.length} bytes)';
     });
+
+    // Show "Processing" on Frame immediately
+    await frame!.sendMessage(TxPlainText(msgCode: 0x0a, text: 'Processing...\nPlease wait'));
 
     // Add a small delay to ensure all data is received
     await Future.delayed(const Duration(milliseconds: 500));
@@ -443,9 +482,10 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
       });
       await frame!.sendMessage(TxPlainText(msgCode: 0x0a, text: 'No audio detected\nDouble-tap to retry'));
       
-      // Clear display after delay
+      // Clear display after delay and return to idle
       Timer(const Duration(seconds: 3), () async {
         await frame!.sendMessage(TxPlainText(msgCode: 0x12, text: ' '));
+        _screenState = FrameScreenState.idle;
         if (mounted) {
           setState(() {
             _statusMessage = 'Ready - Tap for time, double-tap to record';
@@ -567,9 +607,14 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
   }
 
   void _executeDoubleTapAction() async {
-    // If microphone is already active, ignore double-tap to prevent interruption
-    if (_frameMicrophoneActive) {
+    // Only allow double-tap in idle state or interruptible states
+    if (_screenState == FrameScreenState.recording) {
       debugPrint('Double tap ignored - already recording (use single tap to stop)');
+      return;
+    }
+    
+    if (_screenState == FrameScreenState.processing) {
+      debugPrint('Double tap ignored - currently processing (non-interruptible)');
       return;
     }
     
@@ -588,7 +633,7 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
       _isListening = true;
     });
     
-    // Start Frame microphone
+    // Start Frame microphone (will set recording state)
     await _startFrameMicrophone();
   }
 
@@ -679,6 +724,7 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
       await Future.delayed(const Duration(seconds: 1));
 
       // Initial setup complete
+      _screenState = FrameScreenState.idle;
       setState(() {
         _statusMessage = 'Ready - Tap for time, double-tap to record';
       });
@@ -698,6 +744,7 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
     // clear
     await frame!.sendMessage(TxPlainText(msgCode: 0x12, text: ' '));
 
+    _screenState = FrameScreenState.idle;
     currentState = ApplicationState.ready;
     if (mounted) setState(() {});
   }
@@ -1057,6 +1104,8 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
   }
 
   Future<void> _sendResponseToFrame(String response) async {
+    // Set AI response state (interruptible)
+    _screenState = FrameScreenState.aiResponse;
     setState(() {
       _statusMessage = 'Juniper: ${response.length > 50 ? "${response.substring(0, 50)}..." : response}';
       _isListening = false;
@@ -1064,13 +1113,16 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
 
     await frame!.sendMessage(TxPlainText(msgCode: 0x0a, text: response));
 
-    // Clear the display after some time
+    // Clear the display after some time (return to idle state)
     Timer(const Duration(seconds: 7), () async {
-      await frame!.sendMessage(TxPlainText(msgCode: 0x12, text: ' '));
-      if (mounted) {
-        setState(() {
-          _statusMessage = 'Ready - Tap for time, double-tap to record';
-        });
+      if (_screenState == FrameScreenState.aiResponse) { // Only clear if still showing AI response
+        await frame!.sendMessage(TxPlainText(msgCode: 0x12, text: ' '));
+        _screenState = FrameScreenState.idle;
+        if (mounted) {
+          setState(() {
+            _statusMessage = 'Ready - Tap for time, double-tap to record';
+          });
+        }
       }
     });
   }
