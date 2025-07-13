@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:simple_frame_app/simple_frame_app.dart';
 import 'package:simple_frame_app/tx/plain_text.dart';
@@ -22,24 +23,43 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
   String _apiKey = '';
   String _statusMessage = 'Connect Frame and set API key to start';
   bool _isListening = false;
+  final TextEditingController _apiKeyController = TextEditingController();
 
   @override
   void initState() {
     super.initState();
-    // API key will be stored in memory for this session
+    _loadApiKey();
   }
 
   Future<void> _loadApiKey() async {
-    // For now, API key is stored in memory only
-    // In a real app, you'd want persistent storage
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final savedKey = prefs.getString('gemini_api_key') ?? '';
+      setState(() {
+        _apiKey = savedKey;
+        if (_apiKey.isNotEmpty) {
+          _statusMessage = 'API key loaded. Connect Frame to start.';
+        }
+      });
+    } catch (e) {
+      debugPrint('Error loading API key: $e');
+    }
   }
 
   Future<void> _saveApiKey(String key) async {
-    // For now, API key is stored in memory only
-    // In a real app, you'd want persistent storage
-    setState(() {
-      _apiKey = key;
-    });
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('gemini_api_key', key);
+      setState(() {
+        _apiKey = key;
+      });
+    } catch (e) {
+      debugPrint('Error saving API key: $e');
+      // Fallback to in-memory storage
+      setState(() {
+        _apiKey = key;
+      });
+    }
   }
 
   void _showApiKeyDialog() {
@@ -47,21 +67,87 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('Gemini API Key'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
+        title: const Row(
           children: [
-            const Text('Enter your Google Gemini API key:'),
-            const SizedBox(height: 8),
-            TextField(
-              controller: controller,
-              decoration: const InputDecoration(
-                hintText: 'Your Gemini API Key',
-                border: OutlineInputBorder(),
-              ),
-              obscureText: true,
-            ),
+            Icon(Icons.key, color: Colors.blue),
+            SizedBox(width: 8),
+            Text('Gemini API Key'),
           ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Enter your Google Gemini API key:',
+                style: TextStyle(fontWeight: FontWeight.w500),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: controller,
+                decoration: const InputDecoration(
+                  hintText: 'AIzaSyC...',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.vpn_key),
+                ),
+                obscureText: true,
+                maxLines: 1,
+              ),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.blue.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.blue.shade200),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.info_outline, color: Colors.blue.shade700, size: 20),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Free Tier Information',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: Colors.blue.shade700,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      '• 15 requests per minute\n'
+                      '• 1,500 requests per day\n'
+                      '• 1 million tokens per day\n'
+                      '• Perfect for Frame usage!',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Colors.blue.shade800,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              GestureDetector(
+                onTap: () {
+                  // This would open the API key creation page
+                },
+                child: Text(
+                  'Get your free API key at ai.google.dev',
+                  style: TextStyle(
+                    color: Colors.blue.shade600,
+                    decoration: TextDecoration.underline,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
         actions: [
           TextButton(
@@ -72,8 +158,137 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
             onPressed: () {
               _saveApiKey(controller.text);
               Navigator.pop(context);
+              if (controller.text.isNotEmpty) {
+                setState(() {
+                  _statusMessage = 'API key configured! Connect Frame to start.';
+                });
+              }
             },
             child: const Text('Save'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _removeApiKey() async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Remove API Key'),
+        content: const Text('Are you sure you want to remove your API key? You will need to enter it again to use Juniper.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: TextButton.styleFrom(foregroundColor: Colors.red),
+            child: const Text('Remove'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed == true) {
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.remove('gemini_api_key');
+        setState(() {
+          _apiKey = '';
+          _statusMessage = 'API key removed. Enter your key below to continue.';
+        });
+      } catch (e) {
+        debugPrint('Error removing API key: $e');
+        setState(() {
+          _apiKey = '';
+          _statusMessage = 'API key removed from memory.';
+        });
+      }
+    }
+  }
+
+  void _showApiInfoDialog() {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Row(
+          children: [
+            Icon(Icons.info_outline, color: Colors.blue),
+            SizedBox(width: 8),
+            Text('Free Tier Information'),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Your Gemini API Free Tier includes:',
+                style: TextStyle(fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 12),
+              const Text('✓ 15 requests per minute'),
+              const Text('✓ 1,500 requests per day'),
+              const Text('✓ 1 million tokens per day'),
+              const SizedBox(height: 16),
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.green.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.green.shade200),
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Icon(Icons.check_circle, color: Colors.green.shade700, size: 20),
+                        const SizedBox(width: 8),
+                        Text(
+                          'Perfect for Frame!',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            color: Colors.green.shade700,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      'The free tier is more than enough for typical Frame usage. Juniper is optimized to use minimal tokens per response.',
+                      style: TextStyle(
+                        fontSize: 13,
+                        color: Colors.green.shade800,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
+              GestureDetector(
+                onTap: () {
+                  // This would open the API key creation page
+                },
+                child: Text(
+                  'Get your free API key at ai.google.dev',
+                  style: TextStyle(
+                    color: Colors.blue.shade600,
+                    decoration: TextDecoration.underline,
+                    fontSize: 13,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Got it'),
           ),
         ],
       ),
@@ -93,32 +308,56 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
           'contents': [
             {
               'parts': [
-                {'text': prompt}
+                {'text': 'You are Juniper, an AI assistant for Frame smart glasses. Keep responses concise (under 100 words) and helpful. Format for display on small screen. User: $prompt'}
               ]
             }
           ],
           'generationConfig': {
-            'maxOutputTokens': 100,
             'temperature': 0.7,
-          }
+            'topK': 40,
+            'topP': 0.95,
+            'maxOutputTokens': 150, // Keep responses short for free tier
+          },
+          'safetySettings': [
+            {
+              'category': 'HARM_CATEGORY_HARASSMENT',
+              'threshold': 'BLOCK_MEDIUM_AND_ABOVE'
+            },
+            {
+              'category': 'HARM_CATEGORY_HATE_SPEECH',
+              'threshold': 'BLOCK_MEDIUM_AND_ABOVE'
+            },
+            {
+              'category': 'HARM_CATEGORY_SEXUALLY_EXPLICIT',
+              'threshold': 'BLOCK_MEDIUM_AND_ABOVE'
+            },
+            {
+              'category': 'HARM_CATEGORY_DANGEROUS_CONTENT',
+              'threshold': 'BLOCK_MEDIUM_AND_ABOVE'
+            }
+          ]
         }),
       );
 
       if (response.statusCode == 200) {
-        final data = jsonDecode(response.body);
-        if (data['candidates'] != null && data['candidates'].isNotEmpty) {
-          return data['candidates'][0]['content']['parts'][0]['text'] ?? 'No response from Juniper.';
+        final jsonResponse = jsonDecode(response.body);
+        if (jsonResponse['candidates'] != null && jsonResponse['candidates'].isNotEmpty) {
+          return jsonResponse['candidates'][0]['content']['parts'][0]['text'];
+        } else {
+          return 'No response generated. Try rephrasing your question.';
         }
+      } else if (response.statusCode == 429) {
+        return 'Rate limit exceeded. Free tier: 15 requests/min. Please wait a moment.';
+      } else if (response.statusCode == 403) {
+        return 'API key invalid or quota exceeded. Check your API key settings.';
       } else {
         debugPrint('Gemini API error: ${response.statusCode} - ${response.body}');
-        return 'Sorry, I encountered an error. Please try again.';
+        return 'API error: ${response.statusCode}. Please try again.';
       }
     } catch (e) {
       debugPrint('Error calling Gemini API: $e');
-      return 'Sorry, I\'m having trouble connecting right now.';
+      return 'Network error. Check your internet connection.';
     }
-
-    return 'No response from Juniper.';
   }
 
   void _handleTap(int taps) async {
@@ -222,6 +461,12 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
   }
 
   @override
+  void dispose() {
+    _apiKeyController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Juniper for Frame',
@@ -230,11 +475,56 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
         appBar: AppBar(
           title: const Text('Juniper for Frame'),
           actions: [
-            IconButton(
-              icon: const Icon(Icons.key),
-              onPressed: _showApiKeyDialog,
-              tooltip: 'Set API Key',
-            ),
+            if (_apiKey.isNotEmpty)
+              PopupMenuButton<String>(
+                icon: const Icon(Icons.key),
+                tooltip: 'API Key Options',
+                onSelected: (value) {
+                  switch (value) {
+                    case 'edit':
+                      _showApiKeyDialog();
+                      break;
+                    case 'remove':
+                      _removeApiKey();
+                      break;
+                    case 'info':
+                      _showApiInfoDialog();
+                      break;
+                  }
+                },
+                itemBuilder: (context) => [
+                  const PopupMenuItem(
+                    value: 'edit',
+                    child: Row(
+                      children: [
+                        Icon(Icons.edit),
+                        SizedBox(width: 8),
+                        Text('Edit API Key'),
+                      ],
+                    ),
+                  ),
+                  const PopupMenuItem(
+                    value: 'info',
+                    child: Row(
+                      children: [
+                        Icon(Icons.info_outline),
+                        SizedBox(width: 8),
+                        Text('Free Tier Info'),
+                      ],
+                    ),
+                  ),
+                  const PopupMenuItem(
+                    value: 'remove',
+                    child: Row(
+                      children: [
+                        Icon(Icons.delete, color: Colors.red),
+                        SizedBox(width: 8),
+                        Text('Remove Key', style: TextStyle(color: Colors.red)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
             getBatteryWidget(),
           ],
         ),
@@ -271,6 +561,146 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
                 ),
               ),
               const SizedBox(height: 24),
+              
+              // Simple API Key Setup (only show if no key is set)
+              if (_apiKey.isEmpty) ...[
+                Card(
+                  elevation: 4,
+                  color: Colors.orange.shade50,
+                  child: Padding(
+                    padding: const EdgeInsets.all(20.0),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          children: [
+                            Icon(Icons.warning, color: Colors.orange.shade700),
+                            const SizedBox(width: 8),
+                            Text(
+                              'Setup Required',
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.orange.shade700,
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        const Text(
+                          'Enter your free Gemini API key to start using Juniper:',
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w500),
+                        ),
+                        const SizedBox(height: 16),
+                        TextField(
+                          controller: _apiKeyController,
+                          decoration: InputDecoration(
+                            hintText: 'AIzaSyC... (paste your API key here)',
+                            border: const OutlineInputBorder(),
+                            prefixIcon: const Icon(Icons.vpn_key),
+                            filled: true,
+                            fillColor: Colors.white,
+                            suffixIcon: _apiKeyController.text.isNotEmpty
+                                ? IconButton(
+                                    icon: const Icon(Icons.clear),
+                                    onPressed: () {
+                                      _apiKeyController.clear();
+                                      setState(() {});
+                                    },
+                                  )
+                                : null,
+                          ),
+                          obscureText: false, // Show the key while typing for easier verification
+                          onChanged: (value) {
+                            setState(() {}); // Update UI when text changes
+                          },
+                        ),
+                        const SizedBox(height: 16),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: ElevatedButton.icon(
+                                onPressed: _apiKeyController.text.trim().isNotEmpty
+                                    ? () {
+                                        _saveApiKey(_apiKeyController.text.trim());
+                                        _apiKeyController.clear();
+                                      }
+                                    : null,
+                                icon: const Icon(Icons.save),
+                                label: const Text('Set API Key'),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.orange,
+                                  foregroundColor: Colors.white,
+                                  padding: const EdgeInsets.symmetric(vertical: 12),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            OutlinedButton.icon(
+                              onPressed: _showApiInfoDialog,
+                              icon: const Icon(Icons.help_outline),
+                              label: const Text('Free Tier'),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        GestureDetector(
+                          onTap: () {
+                            // This would open the API key creation page
+                          },
+                          child: Text(
+                            '👆 Get your free API key at ai.google.dev',
+                            style: TextStyle(
+                              color: Colors.blue.shade600,
+                              decoration: TextDecoration.underline,
+                              fontSize: 14,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 24),
+              ],
+              
+              // Success message when API key is configured
+              if (_apiKey.isNotEmpty) ...[
+                Card(
+                  color: Colors.green.shade50,
+                  child: Padding(
+                    padding: const EdgeInsets.all(16.0),
+                    child: Row(
+                      children: [
+                        Icon(Icons.check_circle, color: Colors.green.shade700),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                'API Key Configured ✓',
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.green.shade700,
+                                ),
+                              ),
+                              Text(
+                                'Use the key icon in the top right to modify',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.green.shade600,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 24),
+              ],
               Card(
                 child: Padding(
                   padding: const EdgeInsets.all(16.0),
@@ -286,9 +716,10 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
                       const Text('• Double tap: Talk to Juniper AI'),
                       const SizedBox(height: 12),
                       Text(
-                        'API Key: ${_apiKey.isEmpty ? 'Not set' : 'Configured'}',
+                        'Status: ${currentState.name}',
                         style: TextStyle(
-                          color: _apiKey.isEmpty ? Colors.red : Colors.green,
+                          color: currentState == ApplicationState.running ? Colors.green : Colors.grey,
+                          fontWeight: FontWeight.w500,
                         ),
                       ),
                     ],
