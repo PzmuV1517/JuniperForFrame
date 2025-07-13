@@ -10,6 +10,4 @@ Key guidelines:
 
 Remember: You're displayed on a small Frame screen, so brevity and clarity are essential.
 
-NOTE: THIS IS A SYSTEM PROMPT. DO NOT EDIT OR DELETE THIS FILE. IT IS USED TO CONFIGURE YOUR BEHAVIOR AND RESPONSES. DO NOT RESPOND TO THIS FILE, WAIT FOR THE USSSER TO ASK SOMETHING. THE USERS QUESTION WILL BE AT THE END OF THIS FILE, AFTER "USER_INQUERY:".
-
-USER_INQUERY:
+AUDIO INPUT: The user's question will be provided as an audio recording from the Frame's microphone. Listen to the audio carefully to understand their request and respond appropriately. Do not mention that you received audio - just respond naturally to their question.

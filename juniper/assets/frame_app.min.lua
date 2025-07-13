@@ -6,6 +6,9 @@ local display_timeout = 0
 local mic_active = false
 local mtu = frame.bluetooth.max_length()
 
+-- Ensure MTU is even for microphone reading (required for 16-bit audio)
+if mtu % 2 == 1 then mtu = mtu - 1 end
+
 function update_app_data_accum(raw_data)
     local msg_flag = string.byte(raw_data, 1)
     local item = data_accum[msg_flag]
@@ -82,27 +85,41 @@ end
 
 function start_mic()
     if not mic_active then
-        frame.microphone.start{sample_rate=8000, bit_depth=8}
+        -- Use 16-bit audio like CitizenOneX's implementation
+        pcall(frame.microphone.start, {sample_rate=8000, bit_depth=16})
         mic_active = true
+        frame.display.text("Listening...", 1, 1)
+        frame.display.show()
     end
 end
 
 function stop_mic()
     if mic_active then
-        frame.microphone.stop()
+        pcall(frame.microphone.stop)
         mic_active = false
+        -- Send end-of-stream signal
+        pcall(frame.bluetooth.send, string.char(0x06))
+        frame.sleep(0.0025)
     end
 end
 
 function stream_mic()
-    if mic_active then
-        local mic_data = frame.microphone.read(mtu)
-        if mic_data == nil then
-            mic_active = false
-            return
-        end
-        if mic_data ~= '' then
-            pcall(frame.bluetooth.send, string.char(0x0b) .. mic_data)
+    -- Prioritize audio streaming like CitizenOneX (20x more than other events)
+    for i=1,20 do
+        if mic_active then
+            local mic_data = frame.microphone.read(mtu)
+            
+            if mic_data == nil then
+                -- Microphone stopped, send final message
+                pcall(frame.bluetooth.send, string.char(0x06))
+                frame.sleep(0.0025)
+                mic_active = false
+                break
+            elseif mic_data ~= '' then
+                -- Send non-final audio data
+                pcall(frame.bluetooth.send, string.char(0x05) .. mic_data)
+                frame.sleep(0.0025)
+            end
         end
     end
 end
@@ -183,6 +200,7 @@ function app_loop()
                 end
             end
 
+            -- Stream microphone data with high priority
             stream_mic()
 
             current_time = frame.time.utc()
@@ -196,7 +214,8 @@ function app_loop()
                 last_batt_send = utc_time
             end
 
-            frame.sleep(0.05)
+            -- Shorter sleep when not streaming to be more responsive
+            if not mic_active then frame.sleep(0.1) end
         end)
 
         if rc == false then

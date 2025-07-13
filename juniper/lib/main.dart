@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
@@ -325,76 +326,6 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
     }
   }
 
-  Future<String> _callGeminiAPIWithUserInput(String userInput) async {
-    if (_apiKey.isEmpty) {
-      return 'API key not set. Please configure your Gemini API key.';
-    }
-
-    try {
-      final systemPrompt = await _loadSystemPrompt();
-      
-      // Combine system prompt with user input as specified in the prompt format
-      final fullPrompt = '$systemPrompt$userInput';
-      
-      final response = await http.post(
-        Uri.parse('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=$_apiKey'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'contents': [
-            {
-              'parts': [
-                {'text': fullPrompt}
-              ]
-            }
-          ],
-          'generationConfig': {
-            'temperature': 0.7,
-            'topK': 40,
-            'topP': 0.95,
-            'maxOutputTokens': 150, // Keep responses short for free tier
-          },
-          'safetySettings': [
-            {
-              'category': 'HARM_CATEGORY_HARASSMENT',
-              'threshold': 'BLOCK_MEDIUM_AND_ABOVE'
-            },
-            {
-              'category': 'HARM_CATEGORY_HATE_SPEECH',
-              'threshold': 'BLOCK_MEDIUM_AND_ABOVE'
-            },
-            {
-              'category': 'HARM_CATEGORY_SEXUALLY_EXPLICIT',
-              'threshold': 'BLOCK_MEDIUM_AND_ABOVE'
-            },
-            {
-              'category': 'HARM_CATEGORY_DANGEROUS_CONTENT',
-              'threshold': 'BLOCK_MEDIUM_AND_ABOVE'
-            }
-          ]
-        }),
-      );
-
-      if (response.statusCode == 200) {
-        final jsonResponse = jsonDecode(response.body);
-        if (jsonResponse['candidates'] != null && jsonResponse['candidates'].isNotEmpty) {
-          return jsonResponse['candidates'][0]['content']['parts'][0]['text'];
-        } else {
-          return 'No response generated. Try rephrasing your question.';
-        }
-      } else if (response.statusCode == 429) {
-        return 'Rate limit exceeded. Free tier: 15 requests/min. Please wait a moment.';
-      } else if (response.statusCode == 403) {
-        return 'API key invalid or quota exceeded. Check your API key settings.';
-      } else {
-        debugPrint('Gemini API error: ${response.statusCode} - ${response.body}');
-        return 'API error: ${response.statusCode}. Please try again.';
-      }
-    } catch (e) {
-      debugPrint('Error calling Gemini API: $e');
-      return 'Network error. Check your internet connection.';
-    }
-  }
-
   void _handleTap(int taps) async {
     // We'll ignore the taps parameter from Frame and implement our own double-tap detection
     _onSingleTapDetected();
@@ -445,19 +376,6 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
     });
   }
 
-  Future<void> _updateSystemPromptWithUserInput(String userInput) async {
-    try {
-      // Read current system prompt
-      final currentPrompt = await rootBundle.loadString('assets/system_prompt.txt');
-      
-      // Log the combination for debugging (actual combination happens in API call)
-      debugPrint('User input will be added to system prompt: $userInput');
-      debugPrint('Combined prompt preview: ${currentPrompt}$userInput');
-    } catch (e) {
-      debugPrint('Error updating system prompt: $e');
-    }
-  }
-
   Future<void> _startFrameMicrophone() async {
     setState(() {
       _frameMicrophoneActive = true;
@@ -488,6 +406,12 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
     
     debugPrint('Stopping Frame microphone. Buffer size: ${_microphoneBuffer.length} bytes');
     
+    // Check if microphone is still active to avoid duplicate processing
+    if (!_frameMicrophoneActive) {
+      debugPrint('Microphone already stopped, skipping duplicate processing');
+      return;
+    }
+    
     // Send microphone stop command to Frame (0x13)
     await frame!.sendMessage(TxCode(msgCode: 0x13, value: 1));
     
@@ -499,10 +423,11 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
     // Add a small delay to ensure all data is received
     await Future.delayed(const Duration(milliseconds: 500));
 
-    // Process the collected audio data
+    // Process the collected audio data only if we still have it
     if (_microphoneBuffer.isNotEmpty) {
-      debugPrint('Processing ${_microphoneBuffer.length} bytes of audio data');
+      debugPrint('Processing ${_microphoneBuffer.length} bytes of audio data via manual stop');
       await _processFrameAudioData(_microphoneBuffer);
+      _microphoneBuffer.clear(); // Clear after processing
     } else {
       debugPrint('No audio data in buffer');
       setState(() {
@@ -524,26 +449,26 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
 
   Future<void> _processFrameAudioData(List<int> audioData) async {
     setState(() {
-      _statusMessage = 'Converting speech to text...';
+      _statusMessage = 'Processing audio with Gemini...';
     });
 
     try {
-      // Convert audio data to speech text
-      // For now, we'll use a placeholder - you would need to integrate with 
-      // a speech-to-text service that accepts raw audio data
-      final spokenText = await _convertAudioToText(audioData);
+      // Send audio directly to Gemini without speech-to-text conversion
+      final response = await _sendAudioToGemini(audioData);
       
-      if (spokenText.trim().isEmpty) {
+      if (response.trim().isEmpty) {
         setState(() {
-          _statusMessage = 'Could not understand speech. Try again.';
+          _statusMessage = 'No response from Gemini. Try again.';
         });
-        await frame!.sendMessage(TxPlainText(msgCode: 0x0a, text: 'Speech unclear\nDouble-tap to retry'));
+        await frame!.sendMessage(TxPlainText(msgCode: 0x0a, text: 'No response\nDouble-tap to retry'));
         return;
       }
 
-      await _processSpeechResult(spokenText);
+      // Send the response directly to Frame
+      await _sendResponseToFrame(response);
+      
     } catch (e) {
-      debugPrint('Error processing audio: $e');
+      debugPrint('Error processing audio with Gemini: $e');
       setState(() {
         _statusMessage = 'Error processing audio. Try again.';
       });
@@ -551,60 +476,86 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
     }
   }
 
-  Future<String> _convertAudioToText(List<int> audioData) async {
-    // TODO: Implement actual speech-to-text conversion
-    // This could use Google Speech-to-Text API, Azure Cognitive Services, etc.
-    // For now, return a placeholder response
-    debugPrint('Received ${audioData.length} bytes of audio data from Frame');
-    
-    // Simulate speech recognition processing
-    await Future.delayed(const Duration(seconds: 2));
-    
-    // Placeholder response - replace with actual speech-to-text service
-    return "What's the weather like today?";
-  }
-
-  Future<void> _processSpeechResult(String spokenText) async {
-    if (spokenText.trim().isEmpty) {
-      setState(() {
-        _statusMessage = 'No speech detected. Try again.';
-        _frameMicrophoneActive = false;
-      });
-      await frame!.sendMessage(TxPlainText(msgCode: 0x0a, text: 'No speech detected\nDouble-tap to retry'));
-      return;
-    }
-
-    setState(() {
-      _statusMessage = 'Processing: "$spokenText"';
-      _frameMicrophoneActive = false;
-    });
-
-    // Update system prompt with user input
-    await _updateSystemPromptWithUserInput(spokenText);
-
-    // Show processing state on Frame
-    await frame!.sendMessage(TxPlainText(msgCode: 0x0a, text: 'Processing...\n"$spokenText"'));
-
-    // Get AI response
-    final response = await _callGeminiAPIWithUserInput(spokenText);
-    
-    // Send response to Frame
-    await frame!.sendMessage(TxPlainText(msgCode: 0x0a, text: response));
-    
-    setState(() {
-      _statusMessage = 'Response sent to Frame';
-      _isListening = false;
-    });
-
-    // Clear the display after 7 seconds to preserve battery
-    Timer(const Duration(seconds: 7), () async {
-      await frame!.sendMessage(TxPlainText(msgCode: 0x12, text: ' '));
-      if (mounted) {
-        setState(() {
-          _statusMessage = 'Ready - Tap for time, double-tap for AI';
-        });
+  Future<String> _sendAudioToGemini(List<int> audioData) async {
+    try {
+      debugPrint('Sending ${audioData.length} bytes of audio directly to Gemini');
+      
+      if (audioData.isEmpty) {
+        debugPrint('No audio data to send to Gemini');
+        return '';
       }
-    });
+
+      // Convert audio data to base64 for Gemini API
+      final audioBytes = Uint8List.fromList(audioData);
+      
+      debugPrint('Prepared ${audioBytes.length} bytes for Gemini');
+
+      // Load the system prompt
+      final systemPrompt = await _loadSystemPrompt();
+      
+      // Prepare the request for Gemini API with audio input
+      final request = {
+        'contents': [
+          {
+            'parts': [
+              {
+                'text': systemPrompt + '\n\nThe user has provided an audio message. Please listen to the audio and respond to their question or request.'
+              },
+              {
+                'inline_data': {
+                  'mime_type': 'audio/wav',
+                  'data': _convertRawAudioToWav(audioBytes)
+                }
+              }
+            ]
+          }
+        ],
+        'generationConfig': {
+          'temperature': 0.7,
+          'topK': 40,
+          'topP': 0.95,
+          'maxOutputTokens': 200,
+        }
+      };
+
+      debugPrint('Sending request to Gemini API with audio...');
+      
+      final response = await http.post(
+        Uri.parse('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=$_apiKey'),
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode(request),
+      );
+
+      debugPrint('Gemini API response status: ${response.statusCode}');
+      
+      if (response.statusCode == 200) {
+        final result = jsonDecode(response.body);
+        debugPrint('Gemini API response: ${result.toString()}');
+        
+        if (result['candidates'] != null && result['candidates'].isNotEmpty) {
+          final content = result['candidates'][0]['content']['parts'][0]['text'];
+          debugPrint('Gemini response: "$content"');
+          return content.toString().trim();
+        } else {
+          debugPrint('No response from Gemini');
+          return 'Sorry, I could not process your audio request.';
+        }
+      } else {
+        debugPrint('Gemini API error: ${response.statusCode} - ${response.body}');
+        if (response.statusCode == 429) {
+          return 'Rate limit exceeded. Please try again in a moment.';
+        } else if (response.statusCode == 403) {
+          return 'API key invalid or quota exceeded. Check your settings.';
+        } else {
+          return 'API error: ${response.statusCode}. Please try again.';
+        }
+      }
+    } catch (e) {
+      debugPrint('Error sending audio to Gemini: $e');
+      return 'Sorry, there was an error processing your request.';
+    }
   }
 
   void _executeDoubleTapAction() async {
@@ -651,14 +602,55 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
             debugPrint('Raw tap detected from Frame');
             _handleTap(1); // Always pass 1, we'll handle double-tap detection ourselves
           }
-          // Look for microphone data messages (0x0b)
-          else if (msgCode == 0x0b && _frameMicrophoneActive) {
-            // Microphone data received from Frame
+          // Look for non-final microphone data messages (0x05)
+          else if (msgCode == 0x05 && _frameMicrophoneActive) {
+            // Non-final microphone data received from Frame
             final audioData = data.sublist(1); // Skip the message code byte
             _microphoneBuffer.addAll(audioData);
-            debugPrint('Received ${audioData.length} bytes of microphone data from Frame (total: ${_microphoneBuffer.length})');
+            debugPrint('Received ${audioData.length} bytes of non-final microphone data from Frame (total: ${_microphoneBuffer.length})');
+            
+            // Analyze the first few bytes to see if we're getting actual audio data
+            if (audioData.length >= 4) {
+              final sample1 = audioData[0] | (audioData[1] << 8);
+              final sample2 = audioData[2] | (audioData[3] << 8);
+              debugPrint('Audio samples: $sample1, $sample2 (hex: ${sample1.toRadixString(16)}, ${sample2.toRadixString(16)})');
+            }
           }
-          else if (msgCode == 0x0b && !_frameMicrophoneActive) {
+          // Look for final microphone data messages (0x06) 
+          else if (msgCode == 0x06 && _frameMicrophoneActive) {
+            // Final microphone data or end-of-stream signal
+            debugPrint('Received end-of-stream signal from Frame microphone (total buffer: ${_microphoneBuffer.length} bytes)');
+            
+            // Set microphone as inactive to prevent further processing
+            _frameMicrophoneActive = false;
+            _microphoneTimeout?.cancel();
+            
+            if (_microphoneBuffer.isNotEmpty) {
+              // Process the complete audio buffer
+              debugPrint('Processing ${_microphoneBuffer.length} bytes of audio data directly');
+              Future.delayed(Duration.zero, () async {
+                await _processFrameAudioData(_microphoneBuffer);
+                _microphoneBuffer.clear();
+              });
+            } else {
+              debugPrint('No audio data received, microphone buffer is empty');
+              Future.delayed(Duration.zero, () async {
+                await frame!.sendMessage(TxPlainText(msgCode: 0x0a, text: 'No audio detected\nDouble-tap to retry'));
+                setState(() {
+                  _isListening = false;
+                  _statusMessage = 'Ready - Tap for time, double-tap for AI';
+                });
+              });
+            }
+          }
+          // Look for old format microphone data messages (0x0b) for backward compatibility
+          else if (msgCode == 0x0b && _frameMicrophoneActive) {
+            // Legacy microphone data received from Frame
+            final audioData = data.sublist(1); // Skip the message code byte
+            _microphoneBuffer.addAll(audioData);
+            debugPrint('Received ${audioData.length} bytes of legacy microphone data from Frame (total: ${_microphoneBuffer.length})');
+          }
+          else if ((msgCode == 0x05 || msgCode == 0x06 || msgCode == 0x0b) && !_frameMicrophoneActive) {
             debugPrint('Received microphone data but microphone not active, ignoring');
           }
           else {
@@ -1005,5 +997,66 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
         persistentFooterButtons: getFooterButtonsWidget(),
       ),
     );
+  }
+
+  String _convertRawAudioToWav(Uint8List rawAudio, {int sampleRate = 8000, int channels = 1, int bitDepth = 16}) {
+    // Calculate the total size of the WAV file
+    int dataSize = rawAudio.length;
+    int headerSize = 44; // Standard WAV header is 44 bytes
+    int fileSize = headerSize + dataSize;
+
+    // Create a buffer to hold the header and audio data
+    final wavData = BytesBuilder();
+
+    // RIFF header
+    wavData.add(Uint8List.fromList('RIFF'.codeUnits)); // ChunkID
+    wavData.add(_intToBytes(fileSize - 8, 4));         // ChunkSize
+    wavData.add(Uint8List.fromList('WAVE'.codeUnits)); // Format
+
+    // fmt sub-chunk
+    wavData.add(Uint8List.fromList('fmt '.codeUnits)); // Subchunk1ID
+    wavData.add(_intToBytes(16, 4));                   // Subchunk1Size (PCM)
+    wavData.add(_intToBytes(1, 2));                    // AudioFormat (1 for PCM)
+    wavData.add(_intToBytes(channels, 2));             // NumChannels
+    wavData.add(_intToBytes(sampleRate, 4));           // SampleRate
+    wavData.add(_intToBytes(sampleRate * channels * (bitDepth ~/ 8), 4)); // ByteRate
+    wavData.add(_intToBytes(channels * (bitDepth ~/ 8), 2));              // BlockAlign
+    wavData.add(_intToBytes(bitDepth, 2));             // BitsPerSample
+
+    // data sub-chunk
+    wavData.add(Uint8List.fromList('data'.codeUnits)); // Subchunk2ID
+    wavData.add(_intToBytes(dataSize, 4));             // Subchunk2Size
+    wavData.add(rawAudio);                             // Audio data
+
+    // Return the WAV data as base64
+    return base64Encode(wavData.toBytes());
+  }
+
+  // Helper function to convert an integer to a byte list of given length
+  Uint8List _intToBytes(int value, int length) {
+    final result = Uint8List(length);
+    for (int i = 0; i < length; i++) {
+      result[i] = (value >> (8 * i)) & 0xFF;
+    }
+    return result;
+  }
+
+  Future<void> _sendResponseToFrame(String response) async {
+    setState(() {
+      _statusMessage = 'Juniper: ${response.length > 50 ? "${response.substring(0, 50)}..." : response}';
+      _isListening = false;
+    });
+
+    await frame!.sendMessage(TxPlainText(msgCode: 0x0a, text: response));
+
+    // Clear the display after some time
+    Timer(const Duration(seconds: 7), () async {
+      await frame!.sendMessage(TxPlainText(msgCode: 0x12, text: ' '));
+      if (mounted) {
+        setState(() {
+          _statusMessage = 'Ready - Tap for time, double-tap for AI';
+        });
+      }
+    });
   }
 }
