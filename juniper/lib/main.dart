@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:simple_frame_app/simple_frame_app.dart';
 import 'package:simple_frame_app/tx/plain_text.dart';
 import 'package:simple_frame_app/tx/code.dart';
+import 'package:simple_frame_app/text_utils.dart';
 
 // Screen state management for Frame display
 enum FrameScreenState {
@@ -36,10 +37,14 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
   bool _isListening = false;
   final TextEditingController _apiKeyController = TextEditingController();
   
-  // Double-tap detection variables
+  // Double-tap detection variables - increased timeout for less sensitivity
   Timer? _tapTimer;
   int _tapCount = 0;
-  static const Duration _tapTimeout = Duration(milliseconds: 500);
+  static const Duration _tapTimeout = Duration(milliseconds: 800);
+  
+  // Tap debouncing to prevent accidental triggers
+  DateTime? _lastTapTime;
+  static const Duration _tapDebounce = Duration(milliseconds: 200);
 
   // Frame microphone variables
   List<int> _microphoneBuffer = [];
@@ -48,6 +53,13 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
 
   // Screen state management
   FrameScreenState _screenState = FrameScreenState.idle;
+  
+  // Flag to prevent duplicate audio processing
+  bool _audioBeingProcessed = false;
+  
+  // Response chunking for display (like CitizenOneX teleprompter)
+  final List<String> _responseChunks = [];
+  int _currentChunk = 0;
 
   @override
   void initState() {
@@ -345,6 +357,14 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
 
   void _onSingleTapDetected() {
     debugPrint('Tap detected. Current screen state: $_screenState');
+    
+    // Debounce taps to prevent accidental triggers
+    final now = DateTime.now();
+    if (_lastTapTime != null && now.difference(_lastTapTime!) < _tapDebounce) {
+      debugPrint('Tap ignored - too soon after last tap (${now.difference(_lastTapTime!).inMilliseconds}ms)');
+      return;
+    }
+    _lastTapTime = now;
 
     // Handle non-interruptible states with special behavior
     if (_screenState == FrameScreenState.recording) {
@@ -361,6 +381,26 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
     }
 
     // For interruptible states (idle, hud, aiResponse), use normal tap detection
+    if (_screenState == FrameScreenState.aiResponse) {
+      // If showing AI response, tap advances to next chunk or closes if last
+      if (_responseChunks.length > 1 && _currentChunk < _responseChunks.length - 1) {
+        _currentChunk++;
+        _displayCurrentChunk();
+        debugPrint('Advanced to chunk ${_currentChunk + 1}/${_responseChunks.length}');
+        return; // Don't count this tap for double-tap detection
+      } else {
+        debugPrint('AI response completed or closed by tap');
+        // Close AI response and return to idle
+        _screenState = FrameScreenState.idle;
+        _audioBeingProcessed = false;
+        frame!.sendMessage(TxPlainText(msgCode: 0x12, text: ' '));
+        setState(() {
+          _statusMessage = 'Ready - Tap for time, double-tap to record';
+        });
+        return; // Don't count this tap for double-tap detection
+      }
+    }
+    
     _tapCount++;
     debugPrint('Tap detected. Total count: $_tapCount');
 
@@ -470,12 +510,14 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
     // Add a small delay to ensure all data is received
     await Future.delayed(const Duration(milliseconds: 500));
 
-    // Process the collected audio data only if we still have it
-    if (_microphoneBuffer.isNotEmpty) {
+    // Process the collected audio data only if we still have it and haven't processed it yet
+    if (_microphoneBuffer.isNotEmpty && _screenState == FrameScreenState.processing && !_audioBeingProcessed) {
+      _audioBeingProcessed = true; // Prevent duplicate processing
       debugPrint('Processing ${_microphoneBuffer.length} bytes of audio data via manual stop');
       await _processFrameAudioData(_microphoneBuffer);
       _microphoneBuffer.clear(); // Clear after processing
-    } else {
+      _audioBeingProcessed = false; // Reset flag
+    } else if (_microphoneBuffer.isEmpty) {
       debugPrint('No audio data in buffer');
       setState(() {
         _statusMessage = 'No audio detected. Try again.';
@@ -684,22 +726,26 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
             _frameMicrophoneActive = false;
             _microphoneTimeout?.cancel();
             
-            if (_microphoneBuffer.isNotEmpty) {
+            // Only process if we're in recording state and not already being processed
+            if (_screenState == FrameScreenState.recording && _microphoneBuffer.isNotEmpty && !_audioBeingProcessed) {
+              _audioBeingProcessed = true; // Prevent duplicate processing
+              // Set processing state (non-interruptible)
+              _screenState = FrameScreenState.processing;
+              setState(() {
+                _statusMessage = 'Processing audio... (${_microphoneBuffer.length} bytes)';
+              });
+
               // Process the complete audio buffer
-              debugPrint('Processing ${_microphoneBuffer.length} bytes of audio data directly');
+              debugPrint('Processing ${_microphoneBuffer.length} bytes of audio data from end-of-stream');
               Future.delayed(Duration.zero, () async {
+                // Show "Processing" on Frame
+                await frame!.sendMessage(TxPlainText(msgCode: 0x0a, text: 'Processing...\nPlease wait'));
                 await _processFrameAudioData(_microphoneBuffer);
                 _microphoneBuffer.clear();
+                _audioBeingProcessed = false; // Reset flag
               });
             } else {
-              debugPrint('No audio data received, microphone buffer is empty');
-              Future.delayed(Duration.zero, () async {
-                await frame!.sendMessage(TxPlainText(msgCode: 0x0a, text: 'No audio detected\nDouble-tap to retry'));
-                setState(() {
-                  _isListening = false;
-                  _statusMessage = 'Ready - Tap for time, double-tap to record';
-                });
-              });
+              debugPrint('Audio already processed or no data - skipping end-of-stream processing (state: $_screenState, being processed: $_audioBeingProcessed)');
             }
           }
           // Look for old format microphone data messages (0x0b) for backward compatibility
@@ -1111,19 +1157,88 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
       _isListening = false;
     });
 
-    await frame!.sendMessage(TxPlainText(msgCode: 0x0a, text: response));
+    // Use chunk-based display like CitizenOneX teleprompter
+    _displayResponse(response);
+  }
 
-    // Clear the display after some time (return to idle state)
-    Timer(const Duration(seconds: 7), () async {
-      if (_screenState == FrameScreenState.aiResponse) { // Only clear if still showing AI response
-        await frame!.sendMessage(TxPlainText(msgCode: 0x12, text: ' '));
-        _screenState = FrameScreenState.idle;
-        if (mounted) {
-          setState(() {
-            _statusMessage = 'Ready - Tap for time, double-tap to record';
-          });
+  // Display response in chunks, maximizing screen space
+  void _displayResponse(String response) {
+    // Clear previous chunks
+    _responseChunks.clear();
+    _currentChunk = 0;
+    
+    // Split the response into words for optimal packing
+    List<String> words = response.split(' ');
+    String currentChunk = '';
+    
+    for (String word in words) {
+      String testChunk = currentChunk.isEmpty ? word : '$currentChunk $word';
+      
+      // Test if this would still fit in 4 lines at 640px width
+      String wrapped = TextUtils.wrapText(testChunk, 640, 4);
+      List<String> lines = wrapped.split('\n');
+      
+      // If it fits in 4 lines and wrapping didn't truncate content, add the word
+      if (lines.length <= 4 && wrapped.replaceAll('\n', ' ').trim() == testChunk.trim()) {
+        currentChunk = testChunk;
+      } else {
+        // Would overflow, save current chunk and start new one
+        if (currentChunk.isNotEmpty) {
+          _responseChunks.add(TextUtils.wrapText(currentChunk, 640, 4));
         }
+        currentChunk = word;
       }
-    });
+    }
+    
+    // Add the last chunk
+    if (currentChunk.isNotEmpty) {
+      _responseChunks.add(TextUtils.wrapText(currentChunk, 640, 4));
+    }
+    
+    // If no chunks were created (shouldn't happen with word splitting), create fallback
+    if (_responseChunks.isEmpty) {
+      _responseChunks.add(TextUtils.wrapText(response, 640, 4));
+    }
+    
+    debugPrint('Split response into ${_responseChunks.length} chunks for maximum screen usage');
+    
+    // Display first chunk
+    if (_responseChunks.isNotEmpty) {
+      _displayCurrentChunk();
+    } else {
+      // Fallback for empty response
+      frame!.sendMessage(TxPlainText(msgCode: 0x0a, text: 'No response received'));
+    }
+  }
+  
+  void _displayCurrentChunk() {
+    if (_currentChunk < _responseChunks.length) {
+      String chunkText = _responseChunks[_currentChunk];
+      
+      // Just display the content without navigation info
+      frame!.sendMessage(TxPlainText(msgCode: 0x0a, text: chunkText));
+      debugPrint('Displaying chunk ${_currentChunk + 1}/${_responseChunks.length}');
+      
+      // Auto-advance to next chunk after longer delay, or return to idle if last chunk
+      Timer(const Duration(seconds: 12), () async {
+        if (_screenState == FrameScreenState.aiResponse) {
+          if (_currentChunk < _responseChunks.length - 1) {
+            // More chunks available, advance to next
+            _currentChunk++;
+            _displayCurrentChunk();
+          } else {
+            // Last chunk, return to idle
+            await frame!.sendMessage(TxPlainText(msgCode: 0x12, text: ' '));
+            _screenState = FrameScreenState.idle;
+            _audioBeingProcessed = false; // Reset processing flag
+            if (mounted) {
+              setState(() {
+                _statusMessage = 'Ready - Tap for time, double-tap to record';
+              });
+            }
+          }
+        }
+      });
+    }
   }
 }
