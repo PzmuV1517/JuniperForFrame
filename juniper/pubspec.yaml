@@ -10,7 +10,7 @@ dependencies:
   flutter:
     sdk: flutter
   http: ^1.2.2
-  simple_frame_app: ^0.0.6
+  simple_frame_app: ^0.0.9
   shared_preferences: ^2.2.2
 
 dev_dependencies:
@@ -21,4 +21,5 @@ dev_dependencies:
 flutter:
   uses-material-design: true
   assets:
-    - assets/juniper_app.min.lua
+    - assets/frame_app.min.lua
+    - assets/system_prompt.txt

@@ -4,11 +4,14 @@
 -- Frame to phone flags
 BATTERY_LEVEL_FLAG = 0x0c
 TAP_MSG = 0x09
+MIC_DATA_FLAG = 0x0b
 
 -- Phone to Frame flags
 TEXT_FLAG = 0x0a
 TAP_SUBS_FLAG = 0x10
 CLEAR_FLAG = 0x12
+MIC_START_FLAG = 0x11
+MIC_STOP_FLAG = 0x13
 
 local app_data_accum = {}
 local app_data_block = {}
@@ -80,9 +83,66 @@ function parse_clear(data)
     return clear
 end
 
+-- Parse microphone start command
+function parse_mic_start(data)
+    local mic_start = {}
+    mic_start.value = string.byte(data, 1)
+    return mic_start
+end
+
+-- Parse microphone stop command
+function parse_mic_stop(data)
+    local mic_stop = {}
+    mic_stop.value = string.byte(data, 1)
+    return mic_stop
+end
+
 -- Handle tap events
 function handle_tap()
     pcall(frame.bluetooth.send, string.char(TAP_MSG))
+end
+
+-- Microphone streaming variables
+local mic_streaming = false
+local mtu = frame.bluetooth.max_length()
+
+-- Start microphone streaming
+function start_microphone()
+    if not mic_streaming then
+        frame.microphone.start{sample_rate=8000, bit_depth=8}  -- 8kHz 8-bit for good quality and bandwidth
+        mic_streaming = true
+        print("Microphone started")
+    end
+end
+
+-- Stop microphone streaming  
+function stop_microphone()
+    if mic_streaming then
+        frame.microphone.stop()
+        mic_streaming = false
+        print("Microphone stopped")
+    end
+end
+
+-- Stream microphone data to phone
+function stream_microphone_data()
+    if mic_streaming then
+        local data = frame.microphone.read(mtu)
+        
+        if data == nil then
+            -- Stream stopped, clean up
+            mic_streaming = false
+            return
+        end
+        
+        if data ~= '' then
+            -- Send microphone data to phone with MIC_DATA_FLAG
+            local success = pcall(frame.bluetooth.send, string.char(MIC_DATA_FLAG) .. data)
+            if not success then
+                -- If Bluetooth send fails, we'll try again next loop
+            end
+        end
+    end
 end
 
 -- register the respective message parsers
@@ -90,6 +150,8 @@ local parsers = {}
 parsers[TEXT_FLAG] = parse_text
 parsers[TAP_SUBS_FLAG] = parse_tap_subs
 parsers[CLEAR_FLAG] = parse_clear
+parsers[MIC_START_FLAG] = parse_mic_start
+parsers[MIC_STOP_FLAG] = parse_mic_stop
 
 -- Works through app_data_block and if any items are ready, run the corresponding parser
 function process_raw_items()
@@ -166,7 +228,22 @@ function app_loop()
                         clear_display()
                         app_data[CLEAR_FLAG] = nil
                     end
+
+                    -- Handle microphone start
+                    if (app_data[MIC_START_FLAG] ~= nil) then
+                        start_microphone()
+                        app_data[MIC_START_FLAG] = nil
+                    end
+
+                    -- Handle microphone stop
+                    if (app_data[MIC_STOP_FLAG] ~= nil) then
+                        stop_microphone()
+                        app_data[MIC_STOP_FLAG] = nil
+                    end
                 end
+
+                -- Stream microphone data continuously if active
+                stream_microphone_data()
 
                 -- Check if display should timeout for battery preservation
                 current_time = frame.time.utc()

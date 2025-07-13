@@ -1,18 +1,19 @@
-# Teleprompter for Frame
+# Juniper for Frame
 
-Simple teleprompter that loads a text file picked from the user's device and sends one line at a time for display on Frame.
+AI assistant app that transforms your Frame into an intelligent companion. Connect to Google Gemini for smart conversations and helpful responses.
 
-Next/Previous paging through content is done via a vertical swipe up or down anywhere on the application screen.
+## Features
 
-As a result, bluetooth page-turning (and "tiktok scrolling") rings can be used for paging forward and backward, since they (some of them, at least) connect as a HID device imitating a mouse, and perform a click and drag up/down over a certain region of the display.
+- **Single Tap**: Display current date and time
+- **Double Tap**: Activate Juniper AI assistant powered by Google Gemini
+- **Smart Responses**: Optimized for Frame's small display with concise, helpful answers
+- **Easy Setup**: Simple API key configuration with persistent storage
+- **Battery Efficient**: Idle mode preserves Frame battery life
 
-For a sample text file, [to_be_or_not_to_be.txt](assets/to_be_or_not_to_be.txt) is provided in this repo, although it isn't used at runtime by Flutter. Instead, download this file to your device Downloads folder and pick it when running the app (or any other .txt file of your choosing).
+## Setup
 
-### Frameshots
-![Frameshot1](docs/frameshot1.jpg)
-
-### Screenshots
-![Screenshot1](docs/screenshot1.png)
-
-### Architecture
-![Architecture](docs/Frame%20App%20Architecture%20-%20Teleprompter.svg)
+1. Get your free Google Gemini API key from [ai.google.dev](https://ai.google.dev)
+2. Install the app on your Android device
+3. Connect your Frame via Bluetooth
+4. Enter your API key when prompted
+5. Start chatting with Juniper!

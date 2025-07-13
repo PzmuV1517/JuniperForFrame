@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -24,6 +25,16 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
   String _statusMessage = 'Connect Frame and set API key to start';
   bool _isListening = false;
   final TextEditingController _apiKeyController = TextEditingController();
+  
+  // Double-tap detection variables
+  Timer? _tapTimer;
+  int _tapCount = 0;
+  static const Duration _tapTimeout = Duration(milliseconds: 500);
+
+  // Frame microphone variables
+  List<int> _microphoneBuffer = [];
+  bool _frameMicrophoneActive = false;
+  Timer? _microphoneTimeout;
 
   @override
   void initState() {
@@ -64,14 +75,16 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
 
   void _showApiKeyDialog() {
     final controller = TextEditingController(text: _apiKey);
+    final bool isEditing = _apiKey.isNotEmpty;
+    
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Row(
+        title: Row(
           children: [
-            Icon(Icons.key, color: Colors.blue),
-            SizedBox(width: 8),
-            Text('Gemini API Key'),
+            const Icon(Icons.key, color: Colors.blue),
+            const SizedBox(width: 8),
+            Text(isEditing ? 'Edit API Key' : 'Set API Key'),
           ],
         ),
         content: SingleChildScrollView(
@@ -79,73 +92,79 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              const Text(
-                'Enter your Google Gemini API key:',
-                style: TextStyle(fontWeight: FontWeight.w500),
+              Text(
+                isEditing 
+                  ? 'Update your Google Gemini API key:'
+                  : 'Enter your Google Gemini API key:',
+                style: const TextStyle(fontWeight: FontWeight.w500),
               ),
               const SizedBox(height: 12),
               TextField(
                 controller: controller,
-                decoration: const InputDecoration(
-                  hintText: 'AIzaSyC...',
-                  border: OutlineInputBorder(),
-                  prefixIcon: Icon(Icons.vpn_key),
+                decoration: InputDecoration(
+                  hintText: isEditing ? 'Enter new API key...' : 'AIzaSyC...',
+                  border: const OutlineInputBorder(),
+                  prefixIcon: const Icon(Icons.vpn_key),
+                  helperText: isEditing ? 'Current key will be replaced' : null,
                 ),
-                obscureText: true,
+                obscureText: !isEditing, // Show text when editing for easier verification
                 maxLines: 1,
+                autofocus: true,
               ),
-              const SizedBox(height: 16),
-              Container(
-                padding: const EdgeInsets.all(12),
-                decoration: BoxDecoration(
-                  color: Colors.blue.shade50,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(color: Colors.blue.shade200),
-                ),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Icon(Icons.info_outline, color: Colors.blue.shade700, size: 20),
-                        const SizedBox(width: 8),
-                        Text(
-                          'Free Tier Information',
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            color: Colors.blue.shade700,
+              if (!isEditing) ...[
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: Colors.blue.shade50,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.blue.shade200),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.info_outline, color: Colors.blue.shade700, size: 20),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Free Tier Information',
+                            style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              color: Colors.blue.shade700,
+                            ),
                           ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      '• 15 requests per minute\n'
-                      '• 1,500 requests per day\n'
-                      '• 1 million tokens per day\n'
-                      '• Perfect for Frame usage!',
-                      style: TextStyle(
-                        fontSize: 13,
-                        color: Colors.blue.shade800,
+                        ],
                       ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(height: 12),
-              GestureDetector(
-                onTap: () {
-                  // This would open the API key creation page
-                },
-                child: Text(
-                  'Get your free API key at ai.google.dev',
-                  style: TextStyle(
-                    color: Colors.blue.shade600,
-                    decoration: TextDecoration.underline,
-                    fontSize: 13,
+                      const SizedBox(height: 8),
+                      Text(
+                        '• 15 requests per minute\n'
+                        '• 1,500 requests per day\n'
+                        '• 1 million tokens per day\n'
+                        '• Perfect for Frame usage!',
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: Colors.blue.shade800,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-              ),
+                const SizedBox(height: 12),
+                GestureDetector(
+                  onTap: () {
+                    // This would open the API key creation page
+                  },
+                  child: Text(
+                    'Get your free API key at ai.google.dev',
+                    style: TextStyle(
+                      color: Colors.blue.shade600,
+                      decoration: TextDecoration.underline,
+                      fontSize: 13,
+                    ),
+                  ),
+                ),
+              ],
             ],
           ),
         ),
@@ -160,11 +179,13 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
               Navigator.pop(context);
               if (controller.text.isNotEmpty) {
                 setState(() {
-                  _statusMessage = 'API key configured! Connect Frame to start.';
+                  _statusMessage = isEditing 
+                    ? 'API key updated successfully!'
+                    : 'API key configured! Connect Frame to start.';
                 });
               }
             },
-            child: const Text('Save'),
+            child: Text(isEditing ? 'Update' : 'Save'),
           ),
         ],
       ),
@@ -295,20 +316,34 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
     );
   }
 
-  Future<String> _callGeminiAPI(String prompt) async {
+  Future<String> _loadSystemPrompt() async {
+    try {
+      return await rootBundle.loadString('assets/system_prompt.txt');
+    } catch (e) {
+      debugPrint('Failed to load system prompt: $e');
+      return 'You are Juniper, a helpful AI assistant for Frame smart glasses. Keep responses concise and helpful.';
+    }
+  }
+
+  Future<String> _callGeminiAPIWithUserInput(String userInput) async {
     if (_apiKey.isEmpty) {
       return 'API key not set. Please configure your Gemini API key.';
     }
 
     try {
+      final systemPrompt = await _loadSystemPrompt();
+      
+      // Combine system prompt with user input as specified in the prompt format
+      final fullPrompt = '$systemPrompt$userInput';
+      
       final response = await http.post(
-        Uri.parse('https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent?key=$_apiKey'),
+        Uri.parse('https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=$_apiKey'),
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
           'contents': [
             {
               'parts': [
-                {'text': 'You are Juniper, an AI assistant for Frame smart glasses. Keep responses concise (under 100 words) and helpful. Format for display on small screen. User: $prompt'}
+                {'text': fullPrompt}
               ]
             }
           ],
@@ -361,51 +396,235 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
   }
 
   void _handleTap(int taps) async {
-    debugPrint('Detected $taps tap(s)');
+    // We'll ignore the taps parameter from Frame and implement our own double-tap detection
+    _onSingleTapDetected();
+  }
+
+  void _onSingleTapDetected() {
+    _tapCount++;
+    debugPrint('Tap detected. Total count: $_tapCount');
+
+    // Cancel any existing timer
+    _tapTimer?.cancel();
+
+    // Start a new timer
+    _tapTimer = Timer(_tapTimeout, () {
+      // Timer expired - execute action based on tap count
+      if (_tapCount == 1) {
+        _executeSingleTapAction();
+      } else if (_tapCount >= 2) {
+        _executeDoubleTapAction();
+      }
+      
+      // Reset tap count
+      _tapCount = 0;
+    });
+  }
+
+  void _executeSingleTapAction() async {
+    debugPrint('Executing single tap action - Show date/time HUD');
     
-    if (taps == 1) {
-      // Single tap: Show HUD with date/time
+    setState(() {
+      _statusMessage = 'Showing date/time on Frame';
+    });
+    
+    final now = DateTime.now();
+    final dateStr = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
+    final timeStr = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}';
+    
+    await frame!.sendMessage(TxPlainText(msgCode: 0x0a, text: '$dateStr\n$timeStr'));
+    
+    // Clear the display after 3 seconds
+    Timer(const Duration(seconds: 3), () async {
+      await frame!.sendMessage(TxPlainText(msgCode: 0x12, text: ' '));
+      if (mounted) {
+        setState(() {
+          _statusMessage = 'Ready - Tap for time, double-tap for AI';
+        });
+      }
+    });
+  }
+
+  Future<void> _updateSystemPromptWithUserInput(String userInput) async {
+    try {
+      // Read current system prompt
+      final currentPrompt = await rootBundle.loadString('assets/system_prompt.txt');
+      
+      // Log the combination for debugging (actual combination happens in API call)
+      debugPrint('User input will be added to system prompt: $userInput');
+      debugPrint('Combined prompt preview: ${currentPrompt}$userInput');
+    } catch (e) {
+      debugPrint('Error updating system prompt: $e');
+    }
+  }
+
+  Future<void> _startFrameMicrophone() async {
+    setState(() {
+      _frameMicrophoneActive = true;
+      _statusMessage = 'Listening via Frame... Speak now';
+      _microphoneBuffer.clear();
+    });
+
+    debugPrint('Starting Frame microphone recording');
+
+    // Send microphone start command to Frame (0x11)
+    await frame!.sendMessage(TxCode(msgCode: 0x11, value: 1));
+    debugPrint('Sent microphone start command to Frame');
+    
+    // Show listening state on Frame
+    await frame!.sendMessage(TxPlainText(msgCode: 0x0a, text: 'Listening...\nSpeak your question'));
+
+    // Set timeout for microphone recording (10 seconds)
+    _microphoneTimeout = Timer(const Duration(seconds: 10), () {
+      debugPrint('Microphone timeout reached');
+      _stopFrameMicrophone();
+    });
+    
+    debugPrint('Microphone timeout set for 10 seconds');
+  }
+
+  Future<void> _stopFrameMicrophone() async {
+    _microphoneTimeout?.cancel();
+    
+    debugPrint('Stopping Frame microphone. Buffer size: ${_microphoneBuffer.length} bytes');
+    
+    // Send microphone stop command to Frame (0x13)
+    await frame!.sendMessage(TxCode(msgCode: 0x13, value: 1));
+    
+    setState(() {
+      _frameMicrophoneActive = false;
+      _statusMessage = 'Processing audio... (${_microphoneBuffer.length} bytes)';
+    });
+
+    // Add a small delay to ensure all data is received
+    await Future.delayed(const Duration(milliseconds: 500));
+
+    // Process the collected audio data
+    if (_microphoneBuffer.isNotEmpty) {
+      debugPrint('Processing ${_microphoneBuffer.length} bytes of audio data');
+      await _processFrameAudioData(_microphoneBuffer);
+    } else {
+      debugPrint('No audio data in buffer');
       setState(() {
-        _statusMessage = 'Showing date/time on Frame';
+        _statusMessage = 'No audio detected. Try again.';
       });
+      await frame!.sendMessage(TxPlainText(msgCode: 0x0a, text: 'No audio detected\nDouble-tap to retry'));
       
-      final now = DateTime.now();
-      final dateStr = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
-      final timeStr = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}';
-      
-      await frame!.sendMessage(TxPlainText(msgCode: 0x0a, text: '$dateStr\n$timeStr'));
-      
-    } else if (taps == 2) {
-      // Double tap: AI interaction
-      setState(() {
-        _statusMessage = 'Juniper is listening...';
-        _isListening = true;
-      });
-      
-      // Greet the user and show listening state
-      await frame!.sendMessage(TxPlainText(msgCode: 0x0a, text: 'Hello! I\'m Juniper.\nHow can I help?'));
-      
-      // For now, we'll simulate a voice interaction with a predefined prompt
-      // In a real implementation, you would integrate with speech recognition
-      await Future.delayed(const Duration(seconds: 2));
-      
-      setState(() {
-        _statusMessage = 'Processing your request...';
-      });
-      
-      // Simulate getting a user query (in real app, this would come from speech recognition)
-      const userQuery = "What's the weather like today?";
-      
-      final response = await _callGeminiAPI(userQuery);
-      
-      // Send response to Frame
-      await frame!.sendMessage(TxPlainText(msgCode: 0x0a, text: response));
-      
-      setState(() {
-        _statusMessage = 'Response sent to Frame';
-        _isListening = false;
+      // Clear display after delay
+      Timer(const Duration(seconds: 3), () async {
+        await frame!.sendMessage(TxPlainText(msgCode: 0x12, text: ' '));
+        if (mounted) {
+          setState(() {
+            _statusMessage = 'Ready - Tap for time, double-tap for AI';
+          });
+        }
       });
     }
+  }
+
+  Future<void> _processFrameAudioData(List<int> audioData) async {
+    setState(() {
+      _statusMessage = 'Converting speech to text...';
+    });
+
+    try {
+      // Convert audio data to speech text
+      // For now, we'll use a placeholder - you would need to integrate with 
+      // a speech-to-text service that accepts raw audio data
+      final spokenText = await _convertAudioToText(audioData);
+      
+      if (spokenText.trim().isEmpty) {
+        setState(() {
+          _statusMessage = 'Could not understand speech. Try again.';
+        });
+        await frame!.sendMessage(TxPlainText(msgCode: 0x0a, text: 'Speech unclear\nDouble-tap to retry'));
+        return;
+      }
+
+      await _processSpeechResult(spokenText);
+    } catch (e) {
+      debugPrint('Error processing audio: $e');
+      setState(() {
+        _statusMessage = 'Error processing audio. Try again.';
+      });
+      await frame!.sendMessage(TxPlainText(msgCode: 0x0a, text: 'Processing error\nDouble-tap to retry'));
+    }
+  }
+
+  Future<String> _convertAudioToText(List<int> audioData) async {
+    // TODO: Implement actual speech-to-text conversion
+    // This could use Google Speech-to-Text API, Azure Cognitive Services, etc.
+    // For now, return a placeholder response
+    debugPrint('Received ${audioData.length} bytes of audio data from Frame');
+    
+    // Simulate speech recognition processing
+    await Future.delayed(const Duration(seconds: 2));
+    
+    // Placeholder response - replace with actual speech-to-text service
+    return "What's the weather like today?";
+  }
+
+  Future<void> _processSpeechResult(String spokenText) async {
+    if (spokenText.trim().isEmpty) {
+      setState(() {
+        _statusMessage = 'No speech detected. Try again.';
+        _frameMicrophoneActive = false;
+      });
+      await frame!.sendMessage(TxPlainText(msgCode: 0x0a, text: 'No speech detected\nDouble-tap to retry'));
+      return;
+    }
+
+    setState(() {
+      _statusMessage = 'Processing: "$spokenText"';
+      _frameMicrophoneActive = false;
+    });
+
+    // Update system prompt with user input
+    await _updateSystemPromptWithUserInput(spokenText);
+
+    // Show processing state on Frame
+    await frame!.sendMessage(TxPlainText(msgCode: 0x0a, text: 'Processing...\n"$spokenText"'));
+
+    // Get AI response
+    final response = await _callGeminiAPIWithUserInput(spokenText);
+    
+    // Send response to Frame
+    await frame!.sendMessage(TxPlainText(msgCode: 0x0a, text: response));
+    
+    setState(() {
+      _statusMessage = 'Response sent to Frame';
+      _isListening = false;
+    });
+
+    // Clear the display after 7 seconds to preserve battery
+    Timer(const Duration(seconds: 7), () async {
+      await frame!.sendMessage(TxPlainText(msgCode: 0x12, text: ' '));
+      if (mounted) {
+        setState(() {
+          _statusMessage = 'Ready - Tap for time, double-tap for AI';
+        });
+      }
+    });
+  }
+
+  void _executeDoubleTapAction() async {
+    debugPrint('Executing double tap action - Activate AI');
+    
+    if (_apiKey.isEmpty) {
+      setState(() {
+        _statusMessage = 'Please set your Gemini API key first';
+      });
+      await frame!.sendMessage(TxPlainText(msgCode: 0x0a, text: 'API key required\nSet in app first'));
+      return;
+    }
+
+    setState(() {
+      _statusMessage = 'Activating Juniper AI...';
+      _isListening = true;
+    });
+    
+    // Start Frame microphone
+    await _startFrameMicrophone();
   }
 
   @override
@@ -423,11 +642,28 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
     try {
       _tapSubs?.cancel();
       _tapSubs = frame!.dataResponse.listen((data) {
-        // Look for tap messages (0x09)
-        if (data.isNotEmpty && data[0] == 0x09) {
-          // Tap detected - send the number of taps (usually 1 or 2)
-          int taps = data.length > 1 ? data[1] : 1;
-          _handleTap(taps);
+        if (data.isNotEmpty) {
+          final msgCode = data[0];
+          
+          // Look for tap messages (0x09)
+          if (msgCode == 0x09) {
+            // Each tap message is treated as a single tap for our own double-tap detection
+            debugPrint('Raw tap detected from Frame');
+            _handleTap(1); // Always pass 1, we'll handle double-tap detection ourselves
+          }
+          // Look for microphone data messages (0x0b)
+          else if (msgCode == 0x0b && _frameMicrophoneActive) {
+            // Microphone data received from Frame
+            final audioData = data.sublist(1); // Skip the message code byte
+            _microphoneBuffer.addAll(audioData);
+            debugPrint('Received ${audioData.length} bytes of microphone data from Frame (total: ${_microphoneBuffer.length})');
+          }
+          else if (msgCode == 0x0b && !_frameMicrophoneActive) {
+            debugPrint('Received microphone data but microphone not active, ignoring');
+          }
+          else {
+            debugPrint('Received unknown message code: 0x${msgCode.toRadixString(16).padLeft(2, '0')}');
+          }
         }
       });
 
@@ -438,7 +674,7 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
 
       // Initial setup complete
       setState(() {
-        _statusMessage = 'Juniper ready! Tap Frame to interact.';
+        _statusMessage = 'Ready - Tap for time, double-tap for AI';
       });
 
     } catch (e) {
@@ -463,6 +699,7 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
   @override
   void dispose() {
     _apiKeyController.dispose();
+    _tapTimer?.cancel();
     super.dispose();
   }
 
@@ -555,6 +792,38 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
                         const Padding(
                           padding: EdgeInsets.only(top: 16),
                           child: CircularProgressIndicator(),
+                        ),
+                      if (_frameMicrophoneActive)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 16),
+                          child: Column(
+                            children: [
+                              const Row(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.mic, color: Colors.red, size: 32),
+                                  SizedBox(width: 8),
+                                  Text(
+                                    'Listening...',
+                                    style: TextStyle(
+                                      color: Colors.red,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(height: 12),
+                              ElevatedButton.icon(
+                                onPressed: _stopFrameMicrophone,
+                                icon: const Icon(Icons.stop),
+                                label: Text('Stop Recording (${_microphoneBuffer.length} bytes)'),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: Colors.red,
+                                  foregroundColor: Colors.white,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                     ],
                   ),
@@ -713,7 +982,7 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
                       ),
                       const SizedBox(height: 8),
                       const Text('• Single tap: Show date/time HUD'),
-                      const Text('• Double tap: Talk to Juniper AI'),
+                      const Text('• Double tap (within 0.5s): Start voice conversation'),
                       const SizedBox(height: 12),
                       Text(
                         'Status: ${currentState.name}',
