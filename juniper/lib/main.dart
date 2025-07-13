@@ -11,6 +11,9 @@ import 'package:simple_frame_app/tx/plain_text.dart';
 import 'package:simple_frame_app/tx/code.dart';
 import 'package:simple_frame_app/text_utils.dart';
 
+import 'hud/hud_manager.dart';
+import 'pages/hud_customization_page.dart';
+
 // Screen state management for Frame display
 enum FrameScreenState {
   idle,           // Ready state - interruptible
@@ -60,11 +63,21 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
   // Response chunking for display (like CitizenOneX teleprompter)
   final List<String> _responseChunks = [];
   int _currentChunk = 0;
+  
+  // HUD management
+  late HudManager _hudManager;
 
   @override
   void initState() {
     super.initState();
+    _hudManager = HudManager();
     _loadApiKey();
+    _loadHudConfiguration();
+  }
+  
+  Future<void> _loadHudConfiguration() async {
+    await _hudManager.loadConfiguration();
+    if (mounted) setState(() {});
   }
 
   Future<void> _loadApiKey() async {
@@ -429,19 +442,17 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
       return;
     }
     
-    // Otherwise, show date/time HUD (interruptible)
-    debugPrint('Executing single tap action - Show date/time HUD');
+    // Otherwise, show customizable HUD (interruptible)
+    debugPrint('Executing single tap action - Show customizable HUD');
     
     _screenState = FrameScreenState.hud;
     setState(() {
-      _statusMessage = 'Showing date/time on Frame';
+      _statusMessage = 'Showing HUD on Frame';
     });
     
-    final now = DateTime.now();
-    final dateStr = '${now.year}-${now.month.toString().padLeft(2, '0')}-${now.day.toString().padLeft(2, '0')}';
-    final timeStr = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}:${now.second.toString().padLeft(2, '0')}';
-    
-    await frame!.sendMessage(TxPlainText(msgCode: 0x0a, text: '$dateStr\n$timeStr'));
+    // Generate HUD content from HUD manager
+    final hudText = _hudManager.generateHudText();
+    await frame!.sendMessage(TxPlainText(msgCode: 0x0a, text: hudText));
     
     // Clear the display after 3 seconds (return to idle state)
     Timer(const Duration(seconds: 3), () async {
@@ -808,10 +819,18 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
     return MaterialApp(
       title: 'Juniper for Frame',
       theme: ThemeData.dark(),
-      home: Scaffold(
-        appBar: AppBar(
-          title: const Text('Juniper for Frame'),
-          actions: [
+      home: Builder(
+        builder: (BuildContext context) {
+          return Scaffold(
+            appBar: AppBar(
+              title: const Text('Juniper for Frame'),
+              actions: [
+                // HUD Customization button
+                IconButton(
+                  icon: const Icon(Icons.dashboard_customize),
+                  tooltip: 'Customize HUD',
+                  onPressed: () => _openHudCustomization(context),
+                ),
             if (_apiKey.isNotEmpty)
               PopupMenuButton<String>(
                 icon: const Icon(Icons.key),
@@ -1081,7 +1100,7 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
                         style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
                       ),
                       const SizedBox(height: 8),
-                      const Text('• Single tap: Show date/time HUD'),
+                      const Text('• Single tap: Show customizable HUD'),
                       const Text('• Double tap (within 0.5s): Start voice conversation'),
                       const SizedBox(height: 12),
                       Text(
@@ -1103,6 +1122,8 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
           const Icon(Icons.stop)
         ),
         persistentFooterButtons: getFooterButtonsWidget(),
+          );
+        },
       ),
     );
   }
@@ -1239,6 +1260,38 @@ class MainAppState extends State<MainApp> with SimpleFrameAppState {
           }
         }
       });
+    }
+  }
+
+  void _openHudCustomization(BuildContext context) {
+    debugPrint('HUD customization button pressed');
+    try {
+      Navigator.of(context).push(
+        MaterialPageRoute(
+          builder: (context) => HudCustomizationPage(hudManager: _hudManager),
+        ),
+      ).then((_) {
+        // Refresh when returning from customization
+        if (mounted) {
+          setState(() {});
+        }
+      });
+    } catch (e) {
+      debugPrint('Error opening HUD customization: $e');
+      // Show error dialog
+      showDialog(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Error'),
+          content: Text('Could not open HUD customization: $e'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: const Text('OK'),
+            ),
+          ],
+        ),
+      );
     }
   }
 }
