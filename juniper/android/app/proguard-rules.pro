@@ -1,0 +1,8 @@
+-keep class com.lib.flutter_blue_plus.* { *; }
+-keep class androidx.** { *; }
+-keep class com.google.android.material.** { *; }
+-dontwarn com.lib.flutter_blue_plus.**
+-dontwarn androidx.**
+-keepattributes *Annotation*
+-keepattributes SourceFile,LineNumberTable
+-keep public class * extends java.lang.Exception
