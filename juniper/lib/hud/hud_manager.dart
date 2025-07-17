@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:simple_frame_app/tx/plain_text.dart';
+import 'package:simple_frame_app/tx/code.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'dart:convert';
 
@@ -78,6 +80,38 @@ class HudManager {
     });
 
     return visibleElements.map((element) => element.getText()).join('  ');
+  }
+
+  /// Send HUD to Frame using proper backbuffer protocol
+  Future<void> sendHudToFrame(frame) async {
+    try {
+      // Step 1: Clear the display
+      await frame.sendMessage(TxPlainText(msgCode: 0x12, text: ' '));
+      
+      // Step 2: Send each positioned element as a separate draw call to backbuffer
+      for (var element in getVisibleElements()) {
+        String text = element.getText();
+        if (text.isNotEmpty) {
+          // Send positioned text to backbuffer (msgCode: 0x0b)
+          // Format: "x,y text content"
+          String positionedText = '${element.x.round()},${element.y.round()} $text';
+          await frame.sendMessage(TxPlainText(
+            msgCode: 0x0b, 
+            text: positionedText
+          ));
+          
+          // Small delay between elements to ensure proper processing
+          await Future.delayed(const Duration(milliseconds: 5));
+        }
+      }
+      
+      // Step 3: Send TxCode to execute frame.display.show() and display the backbuffer
+      await frame.sendMessage(TxCode(msgCode: 0x10, value: 1)); // 1 = SHOW_DISPLAY_CODE
+      
+    } catch (e) {
+      print('Error sending HUD to Frame: $e');
+      rethrow;
+    }
   }
 
   /// Save configuration to shared preferences
